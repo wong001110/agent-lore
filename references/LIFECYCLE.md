@@ -5,9 +5,13 @@ Agent Lore should become more selective as data grows. A larger memory database 
 ## Lifecycle
 
 ```text
-run
+run attempt
  ↓
-verified outcome
+execution outcome
+ ↓
+verification
+ ↓
+acceptance / rework feedback
  ↓
 reusable lesson?
  ├─ no → capability/routing statistics only
@@ -15,7 +19,7 @@ reusable lesson?
       ↓
  candidate experience
       ↓
- repeated cross-project evidence
+ accepted + verified cross-project evidence
       ↓
  active experience
       ↓
@@ -24,17 +28,81 @@ reusable lesson?
  explicit skill or regression-eval promotion
 ```
 
-At any point, knowledge may be deprecated or archived.
+At any point, knowledge may be flagged for revalidation, deprecated, or archived.
+
+## Why acceptance matters
+
+A run can be technically successful and still be a poor delivered result.
+
+Examples:
+
+```text
+Tests pass + user requests redesign
+→ execution success
+→ verification passed
+→ acceptance rework
+```
+
+```text
+Implementation completes + integration fails
+→ execution success or partial
+→ verification failed
+→ not accepted evidence
+```
+
+Automatic knowledge promotion therefore uses accepted and verified linked runs rather than raw `outcome=success` counts.
 
 ## Conservative automatic maintenance
 
-`consolidate` calculates success ratio, independent project count, evidence count, reuse count, freshness, and utility.
+`consolidate` calculates acceptance ratio, accepted/verified run count, accepted project diversity, reuse, freshness, and utility.
 
-With `--apply`, it can safely promote a strongly repeated candidate to `active`, generalize strong cross-project experience into a `pattern`, or archive an extremely stale single-use candidate. It intentionally does not automatically turn everything into a Skill or automatically deprecate disputed knowledge.
+With `--apply`, it can safely promote a strongly supported candidate to `active`, generalize broad accepted evidence into a `pattern`, or archive an extremely stale single-use candidate.
+
+It intentionally does not automatically turn everything into a Skill or automatically delete disputed knowledge.
+
+## Negative feedback and revalidation
+
+If a run linked to knowledge receives `rework`, `reject`, or `invalidate` feedback:
+
+```text
+negative feedback
+      ↓
+linked evidence becomes contradictory
+      ↓
+knowledge.needs_revalidation = true
+      ↓
+retrieval warning / lower ranking
+      ↓
+no automatic promotion or materialization
+```
+
+Preserve the historical evidence. Do not silently erase the earlier case, because it may still explain why an approach existed or reveal a context boundary.
 
 ## Skill promotion
 
-A Skill is a stronger procedural artifact. Promote it explicitly when there is a useful procedure, evidence transfers across comparable contexts, current versions still match, and it has not shown meaningful recent contradiction. Materialized Skills remain advisory.
+A Skill is a stronger procedural artifact. Promote it only when there is a useful procedure and accepted/verified evidence supports it.
+
+Knowledge flagged `needs_revalidation` cannot be promoted/materialized until revalidated.
+
+Materialized Skills remain advisory.
+
+## Rework lineage
+
+Rework attempts should share a logical task group:
+
+```text
+Task X
+├─ attempt 1 → verified, rework requested
+├─ attempt 2 → failed verification
+└─ attempt 3 → verified + accepted
+```
+
+This prevents the first attempt from appearing as a clean success and makes these metrics possible:
+
+- first-pass acceptance rate
+- number of reworks
+- accumulated work to accepted result
+- total cost to accepted result
 
 ## Old cases
 
@@ -49,7 +117,7 @@ raw run → statistic
        ↘ archive
 ```
 
-Do not keep hundreds of near-identical active memories. Aggregate evidence and preserve representative or important failures.
+Do not keep hundreds of near-identical active memories. Aggregate evidence and preserve representative or important failures/reworks.
 
 ## Retrieval budget
 
@@ -67,7 +135,7 @@ Agents may selectively read history that supports their initial plan. For high-i
 
 ### Experience-following and negative transfer
 
-Similarity does not prove applicability. Require task-state, stack, version, and project-constraint checks.
+Similarity does not prove applicability. Require task-state, module, stack, version, and project-constraint checks.
 
 ### Staleness
 
@@ -75,7 +143,11 @@ Frameworks, harnesses, and foundation models evolve. Old knowledge should lose f
 
 ### Survivorship bias
 
-Failures and near-misses can be more informative than successes. Preserve established failure reasons.
+Failures, reworks, rejections, and near-misses can be more informative than clean successes. Preserve established reasons.
+
+### Acceptance bias
+
+A user may accept something for schedule reasons even if it is technically mediocre, or reject something for product reasons even though it is technically correct. Keep verification and acceptance as separate dimensions rather than collapsing them into one label.
 
 ### Recency bias
 
@@ -91,7 +163,7 @@ Several summaries derived from one run are not independent validation. `experien
 
 ### Project dominance
 
-A project with many runs should not make its local convention a global truth. Cross-project evidence is a promotion signal.
+A project with many runs should not make its local convention a global truth. Cross-project accepted evidence is a promotion signal.
 
 ### Retrieval and context interference
 
@@ -107,7 +179,7 @@ Do not treat several agents reading the same plan and evidence as independent re
 
 ### Metric gaming
 
-Agents may optimize weak visible checks instead of the actual engineering goal. Prefer diverse deterministic gates, mutation testing where justified, and product-level evidence for important behavior.
+Agents may optimize weak visible checks instead of the actual engineering goal. Prefer diverse deterministic gates, mutation testing where justified, and product-level acceptance for user-facing behavior.
 
 ### Untrusted-source contamination
 
@@ -126,5 +198,7 @@ Long-term success metric:
 ```text
 Memory Lift = performance(memory-assisted) - performance(model-only baseline)
 ```
+
+For real product work, benchmark `performance` with acceptance-aware measures such as first-pass acceptance, rework, time/cost to accepted result, and verification quality—not only execution success.
 
 A negative Memory Lift means the knowledge or retrieval policy is technical debt and should be revalidated, narrowed, or disabled.
