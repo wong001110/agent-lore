@@ -1,103 +1,122 @@
 # Data Model
 
-Agent Lore separates **observed runs** from **distilled experiences**.
+Agent Lore separates **what happened**, **what was learned**, **who/what configuration performed the work**, and **what routing decision was made**.
 
-## Runs
+## `runs`
 
-A run records what happened during one engineering task execution.
+One row per observed execution.
 
-Core fields:
+Important fields:
 
 ```text
 id
-created_at
 source_project
-task_type
-task_summary
-language
-framework
-framework_version
-agent_role
-model
-harness
-outcome
+task_type / task_summary
+language / framework / version
+agent_role / model / harness
+outcome / quality_score
 verification
-latency_ms
-cost_usd
-retry_count
-notes
+cost_usd / latency_ms / retry_count
+run_kind: primary | shadow | challenge
+topology
+agent_count / merge_conflicts
+challenge_level / challenge_useful
+route_decision_id
 experience_id
 ```
 
-### Why runs are separate
-
-Runs support questions such as:
-
-- Which model has the best success/cost ratio for TypeScript test generation?
-- Does a particular agent role require more retries?
-- Does one harness perform better than another on the same task family?
-- Did a retrieved experience actually coincide with improved outcomes?
-
 A run can exist without producing reusable knowledge.
 
-## Experiences
+## `experiences`
 
-An experience is a compact reusable engineering claim distilled from one or more runs.
-
-Core fields:
+A compact reusable claim distilled from runs.
 
 ```text
 id
-created_at
-updated_at
-status
+kind: experience | pattern | skill | eval
+status: candidate | active | deprecated | archived
+knowledge_name
 source_project
-task_type
-task_summary
-language
-framework
-framework_version
+task context
 lesson
 failure_reason
 solution_summary
-confidence
-utility
-evidence_count
-success_count
-failure_count
+confidence / utility
+success_count / failure_count / evidence_count
 reuse_count
-last_used_at
-tags
+trust
+last_verified_at
+status_reason
+superseded_by
 ```
 
-### Status
+`confidence` is a weak metadata signal, not truth probability. `utility` is a lifecycle score, not authority.
 
-V0.1 recognizes:
+## `experience_evidence`
 
-- `candidate` — useful but not yet strongly validated
-- `active` — intentionally trusted as reusable advisory evidence
-- `deprecated` — preserved historically but normally excluded from retrieval
-- `archived` — cold evidence; preserved but normally excluded
-
-New reusable experiences should default to `candidate`.
-
-## Exact duplicate aggregation
-
-V0.1 performs conservative aggregation. If a newly recorded lesson normalizes to the same lesson, task type, language, and framework as an existing candidate/active experience, the existing experience is updated instead of creating another independent-looking knowledge item.
-
-This does **not** prove independent validation. Future versions should preserve stronger lineage/provenance and distinguish independent evidence from copied or derived evidence.
-
-## Model and agent statistics
-
-Do not maintain one global ranking such as:
+Links a knowledge item to actual runs:
 
 ```text
-1. Model A
-2. Model B
-3. Model C
+experience_id
+run_id
+relation: supports | contradicts | related
 ```
 
-Compare configuration performance within task context:
+This enables cross-project evidence counts and reduces correlated-evidence inflation.
+
+## `agent_configs`
+
+Configurations that the Phase 4 router is allowed to choose.
+
+```text
+name
+model
+harness
+agent_role
+enabled
+can_delegate
+max_depth
+quality_tier
+cost_tier
+priority
+notes
+```
+
+`quality_tier` and `cost_tier` are only cold-start priors. They must not be presented as benchmark facts.
+
+## `routing_decisions`
+
+One row per integrated recommendation.
+
+It captures:
+
+```text
+mode
+task fingerprint
+complexity / risk
+parallelizable / dependency level / cross-domain
+estimated subtasks
+uncertainty
+memory conflict / stale memory
+deterministic evidence
+cost of failure
+recommended topology
+recommended agent config/model/harness
+model score/confidence
+topology confidence
+challenge level/score
+reasons
+applied
+outcome_run_id
+```
+
+The `outcome_run_id` closes the feedback loop when `record --route-decision-id ...` is used.
+
+## Task-conditioned performance
+
+Do not store one global model ranking.
+
+Evaluate:
 
 ```text
 task type
@@ -105,85 +124,46 @@ task type
 × agent role
 × model
 × harness
-→ success rate / cost / latency / retries
+→ outcome / quality / effective cost / latency / retries
 ```
 
-A later router may optimize an effective-cost objective such as:
+A cheap model that causes repeated retries can be worse economically than a stronger model that completes once.
+
+## Topology outcomes
+
+Topology learning derives from run fields:
 
 ```text
-Effective Cost = inference cost + retry cost + reviewer cost + failure-recovery cost
+topology
+agent_count
+merge_conflicts
+success
+quality
+cost
+retries
 ```
 
-## Confidence
+This allows future recommendations to learn that one task distribution may benefit from flat parallelism while another is harmed by coordination overhead.
 
-`confidence` is intentionally not treated as truth probability. It is a weak metadata signal about how strongly the experience is currently supported.
+## Learned skill files
 
-Future versions should split this into multiple dimensions, for example:
+An `active` knowledge item explicitly promoted to `kind=skill` can be materialized to:
 
 ```text
-source_quality
-execution_evidence
-transfer_confidence
-environment_match
-freshness
+~/.agent-lore/knowledge/skills/<skill-name>/SKILL.md
 ```
 
-## Utility
-
-`utility` is reserved for later lifecycle policies. Useful inputs may include:
-
-```text
-reuse_count
-success_rate
-independent_project_count
-novelty
-freshness
-transfer_value
-```
-
-A low-utility experience should normally be archived, not immediately deleted.
-
-## Tags
-
-Tags are stored as a small JSON list of lower-case strings. They should add retrieval context, not duplicate the entire task description.
-
-Good:
-
-```json
-["migration", "enum", "production-data"]
-```
-
-Poor:
-
-```json
-["this-is-a-very-long-copy-of-the-task-description"]
-```
+The SQLite row remains the evidence/provenance source. The generated Skill is an execution-facing representation, not a replacement for evidence history.
 
 ## Privacy boundary
 
 Do not store by default:
 
-- full source files
-- absolute project paths
-- `.env` contents
-- credentials or tokens
-- private keys
+- source repositories
+- full transcripts
+- credentials/secrets
+- `.env` values
 - personal/private user data
 - hidden chain-of-thought
-- full transcripts solely for convenience
 
-The operational data model is designed to learn from **outcomes and lessons**, not to mirror the user's repositories.
-
-## Future lineage model
-
-Later versions should add explicit provenance relationships:
-
-```text
-experience
-  ├─ supported_by run A
-  ├─ supported_by run B
-  ├─ contradicted_by run C
-  └─ derived_from experience X
-```
-
-This prevents three summaries derived from the same original run from being miscounted as three independent confirmations.
+The system should learn primarily from outcomes, concise lessons, and metadata.
