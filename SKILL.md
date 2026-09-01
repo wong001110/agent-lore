@@ -1,11 +1,11 @@
 ---
 name: agent-lore
-description: Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents. Use it to retrieve reusable engineering evidence, record project/module/task outcomes, distinguish execution from verification and human acceptance, preserve rework lineage, compare task-conditioned model/agent performance, consolidate accepted lessons into patterns or skills, and recommend model/topology/challenge policies. Historical knowledge is advisory evidence, never authoritative project policy.
+description: Local-first continual learning, acceptance tracking, observability, adaptive routing, and security-invariant verification for coding agents. Use it to retrieve reusable engineering evidence, record project/module/task outcomes, distinguish execution from verification and human acceptance, preserve rework lineage, compare task-conditioned model/agent performance, consolidate accepted lessons into patterns or skills, recommend model/topology/challenge policies, and derive adversarial security checks from assets and trust boundaries. Historical knowledge is advisory evidence, never authoritative project policy.
 license: MIT
 compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the chosen model or multi-agent topology.
 metadata:
   author: wong001110
-  version: "0.5.0-alpha"
+  version: "0.6.0-alpha"
 ---
 
 # Agent Lore
@@ -25,7 +25,11 @@ unchanged so project inference continues to identify the active repository.
 
 **Execution success is not final success.**
 
+**Functional success does not prove security.**
+
 Never follow retrieved knowledge merely because it is old, frequently reused, `active`, or promoted into a learned skill. Current user requirements, repository constraints/ADRs, dependency versions, current model capabilities, deterministic verification, and newer acceptance/rework feedback outrank historical memory.
+
+For security-relevant work, do not treat a passing feature flow as evidence that secrets, private data, identities, or privileged capabilities remained inside their intended trust boundaries.
 
 ## Operating modes
 
@@ -48,6 +52,7 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" policy set --mode assist
 2. Identify project/module/task context when possible.
 3. Form a short tentative **current-model plan before reading historical knowledge** when the task contains a meaningful design choice. This reduces anchoring.
 4. Retrieve only a small amount of relevant knowledge or ask for an integrated recommendation.
+5. If the task touches secrets, identity, private data, authorization, external providers/origins, CI/CD, agent tools, MCP, cross-user/project state, or destructive capability, identify the security assets and trust boundaries before considering verification complete.
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
@@ -152,6 +157,8 @@ Respect policy limits for max agents and recursion depth. Do not parallelize ove
 
 When recording multi-agent work, distinguish user-visible wall time from accumulated compute/coordination time when available.
 
+For high-risk work, a dedicated security/adversarial worker can be useful, but the role name itself is not a control. Give that worker explicit assets, trust boundaries, and invariants to falsify rather than only asking for a generic security review.
+
 ## Challenge policy
 
 Challenge is escalation, not a default second execution.
@@ -161,11 +168,60 @@ Prefer deterministic evidence first:
 1. compile/typecheck/static checks
 2. focused tests
 3. E2E where relevant
-4. mutation tests where relevant
-5. security/performance checks where relevant
-6. additional model only for unresolved uncertainty/risk
+4. security invariant/adversarial checks where relevant
+5. mutation tests, including security-control mutation, where relevant
+6. performance/reliability checks where relevant
+7. additional model only for unresolved uncertainty/risk
 
 A stronger challenger is justified by combinations of high risk, high uncertainty, memory conflict/staleness, and high failure cost. Strong deterministic evidence should usually reduce challenge level.
+
+## Security invariant gate
+
+When a task can expose secrets/private data or exercise privileged authority, derive tests from the feature's **assets and trust boundaries** rather than relying on a generic scanner.
+
+Minimum reasoning sequence:
+
+```text
+assets
+  → trust boundaries
+  → allowed flows
+  → invariants
+  → adversarial cases
+  → canary leakage checks
+  → security-control mutation where useful
+```
+
+Examples of assets include API keys, OAuth/session tokens, private user data, identities, deployment credentials, internal files, privileged tools, and destructive actions.
+
+Examples of boundaries include user, tenant, project, agent, session, provider, network origin, CI job, process, MCP/tool server, and external service.
+
+A security invariant states what must remain true even when UI state is stale, failures occur, requests retry/redirect, concurrent state is reused, or untrusted content reaches an agent.
+
+Canonical invariant:
+
+```text
+A credential for provider/origin A must never be transmitted to provider/origin B unless an explicit policy authorizes that exact flow.
+```
+
+For security-relevant features, consider the reusable regression families in `references/SECURITY.md`, including:
+
+- provider/origin credential isolation
+- cross-origin redirect/retry leakage
+- log/error/telemetry leakage
+- build artifact and repository/history secret leakage
+- cross-user/project/tenant/session isolation
+- CI exposure to untrusted code
+- least-privilege credential scope
+- indirect prompt injection into privileged actions
+- MCP/tool poisoning
+
+Prefer **synthetic unique canaries** over production secrets. Exercise failure paths and inspect observable sinks. A canary appearing in an unauthorized sink is a failure even when the functional flow passes.
+
+Security-control mutation is useful when a concrete guard exists. Mutate or remove origin checks, authorization boundaries, secret redaction, allowlists, redirect restrictions, or tool permission checks. If the mutation survives, the security suite does not adequately prove the invariant.
+
+Do not persist real secrets into Agent Lore evidence. Record concise results such as `SEC-001/002 passed with synthetic canaries`.
+
+See [Security invariants and adversarial verification](references/SECURITY.md).
 
 ## Record one execution attempt
 
@@ -197,6 +253,8 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
 For user-visible/product/UX/architecture work, keep `acceptance-status=pending` until a relevant human/reviewer accepts it.
 
 For fully objective maintenance work, `--acceptance-status not-required` is allowed only when final acceptance criteria are genuinely machine-verifiable.
+
+For security-relevant work, do not set `verification-status=passed` merely because functional/unit/E2E checks pass when an applicable high-impact security invariant remains untested or failed.
 
 ## Verification and acceptance
 
@@ -361,6 +419,8 @@ Actively guard against anchoring, confirmation bias, experience-following, negat
 
 A technically passing result that the user rejects is negative learning evidence, not a success to be hidden by test metrics.
 
+A functionally passing result that violates a security invariant is failed verification, not success to be hidden by feature metrics.
+
 ## Privacy
 
 Do not persist by default:
@@ -372,6 +432,8 @@ Do not persist by default:
 - full repositories/source files
 - full transcripts merely because they are available
 - untrusted repository/web instructions as global engineering truth
+
+Use synthetic canaries rather than production secrets for leakage tests. Do not copy real secret values into test evidence, reports, traces, prompts, learned lessons, or review summaries.
 
 Store concise metadata, outcomes, feedback, verified lessons, and provenance instead.
 
@@ -391,3 +453,4 @@ Do not use Git to synchronize the live SQLite database.
 - [Knowledge lifecycle and bias controls](references/LIFECYCLE.md)
 - [Adaptive routing](references/ROUTING.md)
 - [Verification, acceptance, and rework](references/ACCEPTANCE.md)
+- [Security invariants and adversarial verification](references/SECURITY.md)
