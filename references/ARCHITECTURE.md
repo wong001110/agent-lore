@@ -1,220 +1,225 @@
 # Architecture
 
-Agent Lore v0.1 is intentionally small: a portable local SQLite catalog, a dependency-free CLI, and an Agent Skills instruction layer.
+Agent Lore Integrated Alpha implements Phase 1–4 locally while keeping the foundation model and coding harness replaceable.
 
-## Boundaries
+## System boundary
 
 ```text
-┌──────────────────────────────────────────────────────┐
-│ Coding agent / harness                               │
-│ Codex · DeepSeek Harness · Claude Code · others      │
-└───────────────────────┬──────────────────────────────┘
-                        │
-                        │ SKILL.md workflow + CLI
-                        ▼
-┌──────────────────────────────────────────────────────┐
-│ Agent Lore                                           │
-│                                                      │
-│ retrieve   record   stats   export/import   doctor   │
-└───────────────────────┬──────────────────────────────┘
-                        │
-                        ▼
-┌──────────────────────────────────────────────────────┐
-│ ~/.agent-lore/                                       │
-│                                                      │
-│ agent-lore.db      structured operational data       │
-│ knowledge/         future distilled local artifacts  │
-│ traces/            optional future raw evidence      │
-│ archive/           cold historical artifacts         │
-│ exports/           portable snapshots                │
-└──────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ Coding agent / harness                                    │
+│ planner · lead · worker · reviewer                        │
+└──────────────────────────┬────────────────────────────────┘
+                           │ SKILL.md + CLI
+                           ▼
+┌───────────────────────────────────────────────────────────┐
+│ Agent Lore                                                │
+│                                                           │
+│ Knowledge       Capability         Adaptive routing       │
+│ retrieve        model/role stats   topology               │
+│ record          agent configs      model config           │
+│ consolidate                        challenge               │
+└──────────────────────────┬────────────────────────────────┘
+                           ▼
+┌───────────────────────────────────────────────────────────┐
+│ ~/.agent-lore/                                            │
+│ agent-lore.db · knowledge/skills · archive · exports      │
+└───────────────────────────────────────────────────────────┘
 ```
 
-The Git repository contains the **learning engine and skill instructions**. The user's learned data lives outside the repository.
+The repository is the **learning engine**. User-specific learning state is outside Git.
 
-## V0.1 components
-
-### 1. Skill layer
-
-`SKILL.md` defines when and how an agent should use Agent Lore. It is deliberately opinionated about:
-
-- historical evidence being advisory
-- reducing anchoring before retrieval
-- deterministic verification before LLM review
-- selective recording
-- privacy and untrusted provenance
-- cross-project learning
-
-### 2. Local CLI
-
-`scripts/agent_lore.py` is the operational interface. V0.1 uses only the Python standard library so the skill can work without a package installation or network service.
-
-Commands:
-
-- `init` — create the local directory and schema
-- `retrieve` — rank a small set of relevant active/candidate experiences
-- `record` — save a run and optionally aggregate a reusable lesson
-- `stats` — summarize observed model/agent task outcomes
-- `export` — create a consistent SQLite backup and portable ZIP
-- `import` — restore a portable snapshot with a safety backup
-- `doctor` — inspect the local store
-
-### 3. SQLite catalog
-
-SQLite is an operational catalog, not a transcript dump. It stores:
-
-- structured run metadata
-- reusable experience summaries
-- evidence/reuse counts
-- model/agent outcome observations
-- lifecycle fields
-
-It does **not** need to contain complete source files, chain-of-thought, full terminal logs, or full conversations.
-
-## Runtime flow
+## End-to-end loop
 
 ```text
-Current task
-    │
-    ▼
-inspect current project/state
-    │
-    ▼
-tentative model-native plan
-    │
-    ▼
-retrieve ≤ N historical experiences
-    │
-    ▼
-applicability gate
-    │
-    ├─ irrelevant/stale ─> ignore
-    │
-    └─ useful evidence
-            │
-            ▼
-        implementation
-            │
-            ▼
- deterministic verification
-            │
-            ▼
-      record run outcome
-            │
-            ├─ no reusable lesson ─> stats only
-            │
-            └─ reusable lesson ─> candidate experience
+Task
+ ↓
+Current project inspection
+ ↓
+Tentative model-native plan
+ ↓
+Relevant knowledge retrieval
+ ↓
+Topology + agent configuration + challenge recommendation
+ ↓
+Execution by host harness
+ ↓
+Deterministic verification
+ ↓
+Record run + route decision outcome
+ ↓
+Capability statistics + knowledge evidence
+ ↓
+Consolidate / promote / revalidate / deprecate
+ ↓
+Next task
 ```
 
-## Retrieval philosophy
+## Phase 1 — Local foundation
 
-V0.1 does not use a vector database. That is deliberate.
+Operations:
 
-The first version combines:
+- `init`
+- `retrieve`
+- `record`
+- `stats`
+- `export`
+- `import`
+- `doctor`
 
-- token overlap with the current task
-- exact task-type match
-- language/framework/version match
-- status
-- confidence
-- evidence count
-- freshness
+SQLite is an operational catalog, not a transcript dump.
 
-This keeps retrieval inspectable while the project validates whether external experience actually improves coding-agent performance. Embeddings can be added later if they produce measurable lift.
+## Phase 2 — Knowledge lifecycle
 
-## Experience versus run
-
-A **run** is an observation:
-
-> A specific model/agent configuration attempted a task and produced an outcome.
-
-An **experience** is a distilled reusable claim:
-
-> Under a particular context, this lesson/failure/solution may be useful again.
-
-One run does not automatically deserve an experience. Multiple runs may support the same experience.
-
-## Cross-project scope
-
-The local database is global to the user, not the current repository:
+Agent Lore distinguishes runs from learned knowledge.
 
 ```text
-Project A ─┐
-Project B ─┼─> ~/.agent-lore/agent-lore.db
-Project C ─┘
+run observation
+ ↓
+candidate experience
+ ↓
+active experience
+ ↓
+pattern
+ ↓
+explicit skill/eval promotion
 ```
 
-Project identifiers should be human-meaningful labels, usually the Git repository directory name. Do not store absolute filesystem paths by default.
+Knowledge can be deprecated or archived without deletion. `experience_evidence` links runs to knowledge so project diversity can be measured instead of pretending repeated summaries are independent evidence.
 
-## Agent/model independence
+`consolidate` is intentionally conservative: it may promote repeated cross-project candidates and generalize strong experiences into patterns, but skill promotion and deprecation remain explicit decisions.
 
-The learned layer should survive model replacement.
+## Phase 3 — Capability intelligence
 
-Record configuration dimensions independently:
+`agent_configs` describes what the router is allowed to select:
 
 ```text
-agent role
 model
-harness/runtime
-reasoning/effort (later)
-toolset (later)
+harness
+agent role
+can_delegate
+max_depth
+quality-tier cold-start prior
+cost-tier cold-start prior
+priority
 ```
 
-Do not encode assumptions such as "the test worker is always Model X". Model selection is a later policy derived from observed task-conditioned performance.
-
-## Not in v0.1
-
-The following are architectural extension points, not current requirements:
-
-### Knowledge lifecycle automation
+Observed runs then add task-conditioned evidence:
 
 ```text
-candidate → active → pattern/skill → deprecated/archive
+task × language/framework × role × model × harness
+→ success / quality / cost / latency / retries
 ```
 
-### Model/capability router
+The unit of optimization is an **agent configuration**, not a universal model leaderboard.
+
+## Phase 4 — Adaptive routing
+
+### Topology router
+
+Possible shapes:
 
 ```text
-task fingerprint
-      ↓
-historical configuration outcomes
-      ↓
-cheapest configuration meeting quality threshold
+single
+flat-parallel
+lead-worker
+sequential
 ```
 
-### Multi-agent topology router
+Cold start is heuristic and constrained by task dependencies, parallelizability, cross-domain scope, max depth, and max agents. Once enough outcomes exist, historical topology performance may override the heuristic when evidence is strong.
 
-```text
-single agent | flat parallel | lead/worker | sequential | challenger
-```
+### Model/agent router
+
+Selection blends:
+
+- task-conditioned observed success
+- observed quality
+- observed cost/latency/retries
+- cold-start quality/cost tiers
+- configuration priority
+
+Low-sample observations are smoothed and remain low-confidence.
 
 ### Challenge router
 
-Challenge should be escalation, not a default second execution. A future policy should consider risk, uncertainty, historical conflict, failure cost, and challenge ROI.
+Challenge is an escalation policy. Inputs include:
 
-### MCP/local daemon
+- risk
+- uncertainty
+- cost of failure
+- memory conflict
+- stale memory
+- deterministic evidence strength
 
-A later daemon can expose operations such as:
+Strong deterministic evidence should usually reduce reliance on another LLM.
 
-```text
-retrieve_experience
-record_outcome
-get_model_stats
-recommend_agent_config
-```
+### Exploration
 
-The CLI intentionally comes first so the learning model can be tested without infrastructure complexity.
+Path dependence is controlled with a small exploration rate. Agent Lore exposes an under-sampled exploration candidate in deterministic slots. Shadow evaluation is preferred where possible, especially for new models.
 
-### Cross-device sync
-
-Future cross-device architecture may use a remote source of truth plus local cache/event synchronization. V0.1 only supports explicit portable export/import.
-
-## Key success metric
-
-Long term, the project should measure **Memory Lift**:
+## Operating modes
 
 ```text
-Memory Lift = performance(with Agent Lore) - performance(model-only baseline)
+observe  → recommendation logged, execution unchanged
+assist   → recommendation surfaced, parent decides
+adaptive → recommendation may be applied within guardrails
 ```
 
-A growing knowledge store is not success by itself. If memory-assisted performance is equal or worse, the retrieval/lifecycle policy must change even if the database contains many experiences.
+This separation allows the complete Phase 4 architecture to exist before enough historical data has accumulated to trust adaptive routing.
+
+## Host-harness responsibility
+
+Agent Lore is a Skill + local CLI. It does not itself provide universal process spawning or provider APIs.
+
+The host coding agent/harness is responsible for:
+
+- invoking a selected model/configuration
+- spawning sub-agents if supported
+- enforcing file/write scope
+- stopping runaway delegation
+- passing real outcome metadata back to Agent Lore
+
+## Recursion and budget
+
+Default local policy:
+
+```text
+max_depth = 2
+max_agents = 6
+```
+
+A lead-worker topology is only useful if a registered configuration can delegate and the host runtime actually exposes that capability.
+
+## Storage strategy
+
+```text
+agent-lore.db
+  structured runs
+  knowledge metadata
+  evidence lineage
+  agent configurations
+  routing decisions
+  policy
+
+knowledge/skills/
+  materialized learned Agent Skills
+
+archive/
+  safety backups / future cold artifacts
+
+exports/
+  portable snapshots
+```
+
+Large raw traces remain optional/deferred.
+
+## Phase 5 boundary
+
+Cross-device synchronization is deliberately outside this alpha. The future service can replace local-only storage without changing the conceptual interfaces:
+
+```text
+retrieve
+record outcome
+get capability stats
+recommend route
+consolidate knowledge
+```
