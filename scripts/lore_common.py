@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Agent Lore local-first continual learning CLI.
+"""Shared schema and utilities for Agent Lore.
 
-Integrated Alpha (Phase 1-4):
+Integrated Alpha (Phase 1-4) plus human acceptance/observability:
 - local persistence and portability
 - evidence lifecycle and learned knowledge
 - task-conditioned agent/model capability observations
 - model, topology, and challenge recommendations
+- verification, acceptance, rework lineage, and module/task timing
 
 The CLI intentionally uses only the Python standard library.
 """
@@ -28,8 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-APP_VERSION = "0.4.0-alpha"
-SCHEMA_VERSION = "4"
+APP_VERSION = "0.5.0-alpha"
+SCHEMA_VERSION = "5"
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_+.#-]{2,}")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -45,6 +46,10 @@ DEFAULT_POLICY: dict[str, str] = {
 
 TOPOLOGIES = ("single", "flat-parallel", "lead-worker", "sequential")
 CHALLENGE_LEVELS = ("none", "self-check", "cheap-challenger", "strong-challenger")
+VERIFICATION_STATUSES = ("pending", "passed", "failed", "not-required")
+ACCEPTANCE_STATUSES = ("pending", "accepted", "rework", "rejected", "invalidated", "not-required")
+FEEDBACK_VERDICTS = ("accept", "rework", "reject", "invalidate")
+FEEDBACK_SOURCES = ("human", "reviewer", "auto")
 
 
 def utc_now() -> str:
@@ -85,12 +90,13 @@ def paths() -> dict[str, Path]:
         "traces": home / "traces",
         "archive": home / "archive",
         "exports": home / "exports",
+        "reports": home / "reports",
     }
 
 
 def ensure_dirs() -> dict[str, Path]:
     p = paths()
-    for key in ("home", "knowledge", "skills", "traces", "archive", "exports"):
+    for key in ("home", "knowledge", "skills", "traces", "archive", "exports", "reports"):
         p[key].mkdir(parents=True, exist_ok=True)
     return p
 
@@ -213,6 +219,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "experiences", "last_verified_at", "TEXT")
     ensure_column(conn, "experiences", "status_reason", "TEXT")
     ensure_column(conn, "experiences", "superseded_by", "TEXT")
+    ensure_column(conn, "experiences", "module", "TEXT")
+    ensure_column(conn, "experiences", "task_subtype", "TEXT")
+    ensure_column(conn, "experiences", "needs_revalidation", "INTEGER NOT NULL DEFAULT 0")
 
     # Phase 3/4 run context.
     ensure_column(conn, "runs", "quality_score", "REAL")
@@ -224,15 +233,51 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "runs", "challenge_useful", "INTEGER")
     ensure_column(conn, "runs", "route_decision_id", "TEXT")
 
+    # Human-observable task context and acceptance lifecycle.
+    ensure_column(conn, "runs", "module", "TEXT")
+    ensure_column(conn, "runs", "task_subtype", "TEXT")
+    ensure_column(conn, "runs", "task_scope", "TEXT")
+    ensure_column(conn, "runs", "operation", "TEXT")
+    ensure_column(conn, "runs", "task_group_id", "TEXT")
+    ensure_column(conn, "runs", "parent_run_id", "TEXT")
+    ensure_column(conn, "runs", "attempt_index", "INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "runs", "verification_status", "TEXT NOT NULL DEFAULT 'pending'")
+    ensure_column(conn, "runs", "acceptance_status", "TEXT NOT NULL DEFAULT 'pending'")
+    ensure_column(conn, "runs", "acceptance_reason", "TEXT")
+    ensure_column(conn, "runs", "acceptance_source", "TEXT")
+    ensure_column(conn, "runs", "accepted_at", "TEXT")
+    ensure_column(conn, "runs", "wall_time_ms", "INTEGER")
+    ensure_column(conn, "runs", "compute_time_ms", "INTEGER")
+    ensure_column(conn, "runs", "verification_time_ms", "INTEGER")
+    ensure_column(conn, "runs", "review_time_ms", "INTEGER")
+    ensure_column(conn, "runs", "coordination_time_ms", "INTEGER")
+    ensure_column(conn, "runs", "files_touched", "INTEGER")
+    ensure_column(conn, "runs", "lines_changed", "INTEGER")
+    ensure_column(conn, "runs", "modules_touched", "INTEGER")
+    ensure_column(conn, "runs", "has_db_change", "INTEGER")
+    ensure_column(conn, "runs", "has_api_contract_change", "INTEGER")
+    ensure_column(conn, "runs", "test_count", "INTEGER")
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS experience_evidence (
             experience_id TEXT NOT NULL,
             run_id TEXT NOT NULL,
-            relation TEXT NOT NULL DEFAULT 'supports',
+            relation TEXT NOT NULL DEFAULT 'related',
             created_at TEXT NOT NULL,
             PRIMARY KEY(experience_id, run_id),
             FOREIGN KEY(experience_id) REFERENCES experiences(id),
+            FOREIGN KEY(run_id) REFERENCES runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS run_feedback (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            reason TEXT,
+            source TEXT NOT NULL DEFAULT 'human',
+            related_run_id TEXT,
             FOREIGN KEY(run_id) REFERENCES runs(id)
         );
 
@@ -287,7 +332,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
             applied INTEGER NOT NULL DEFAULT 0,
             outcome_run_id TEXT
         );
+        """
+    )
 
+    ensure_column(conn, "routing_decisions", "source_project", "TEXT")
+    ensure_column(conn, "routing_decisions", "module", "TEXT")
+    ensure_column(conn, "routing_decisions", "task_subtype", "TEXT")
+
+    conn.executescript(
+        """
         CREATE INDEX IF NOT EXISTS idx_experiences_status ON experiences(status);
         CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind);
         CREATE INDEX IF NOT EXISTS idx_experiences_task_type ON experiences(task_type);
@@ -296,10 +349,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model, harness, agent_role);
         CREATE INDEX IF NOT EXISTS idx_runs_topology ON runs(topology, task_type);
         CREATE INDEX IF NOT EXISTS idx_runs_route_decision ON runs(route_decision_id);
+        CREATE INDEX IF NOT EXISTS idx_runs_project_module ON runs(source_project, module, task_type, task_subtype);
+        CREATE INDEX IF NOT EXISTS idx_runs_task_group ON runs(task_group_id, attempt_index);
+        CREATE INDEX IF NOT EXISTS idx_runs_acceptance ON runs(acceptance_status, verification_status);
+        CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_configs_role ON agent_configs(agent_role, enabled);
         CREATE INDEX IF NOT EXISTS idx_routing_task_type ON routing_decisions(task_type, created_at);
         """
     )
+
+    # Existing v0.4 runs become explicit single-attempt task groups without inventing acceptance.
+    conn.execute("UPDATE runs SET task_group_id = id WHERE task_group_id IS NULL OR task_group_id = ''")
 
     set_meta(conn, "schema_version", SCHEMA_VERSION)
     set_meta(conn, "app_version", APP_VERSION)
@@ -381,16 +441,22 @@ def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[s
     score = overlap * 4.0
     reasons: list[str] = []
 
-    if normalize(args.type) and normalize(args.type) == normalize(row["task_type"]):
+    if normalize(getattr(args, "type", None)) and normalize(args.type) == normalize(row["task_type"]):
         score += 3.0
         reasons.append("task-type-match")
-    if normalize(args.language) and normalize(args.language) == normalize(row["language"]):
+    if normalize(getattr(args, "subtype", None)) and normalize(args.subtype) == normalize(row["task_subtype"]):
+        score += 1.5
+        reasons.append("task-subtype-match")
+    if normalize(getattr(args, "module", None)) and normalize(args.module) == normalize(row["module"]):
+        score += 1.5
+        reasons.append("module-match")
+    if normalize(getattr(args, "language", None)) and normalize(args.language) == normalize(row["language"]):
         score += 2.0
         reasons.append("language-match")
-    if normalize(args.framework) and normalize(args.framework) == normalize(row["framework"]):
+    if normalize(getattr(args, "framework", None)) and normalize(args.framework) == normalize(row["framework"]):
         score += 2.5
         reasons.append("framework-match")
-    if normalize(args.framework_version) and normalize(row["framework_version"]):
+    if normalize(getattr(args, "framework_version", None)) and normalize(row["framework_version"]):
         if normalize(args.framework_version) == normalize(row["framework_version"]):
             score += 1.5
             reasons.append("version-match")
@@ -410,6 +476,9 @@ def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[s
     if row["trust"] not in ("local-verified", "independent-verified"):
         score -= 0.75
         reasons.append("low-trust-provenance")
+    if int(row["needs_revalidation"] or 0):
+        score -= 1.0
+        reasons.append("needs-revalidation")
     if overlap > 0:
         reasons.append("semantic-token-overlap")
     return score, reasons
