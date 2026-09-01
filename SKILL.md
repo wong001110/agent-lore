@@ -1,22 +1,24 @@
 ---
 name: agent-lore
-description: Local-first continual learning and adaptive routing for coding agents. Use it to retrieve reusable engineering evidence, record verified outcomes, consolidate cross-project lessons into patterns or skills, compare task-conditioned model/agent performance, and recommend single/parallel/lead-worker/sequential topology plus selective challenge escalation. Historical knowledge is advisory evidence, never authoritative project policy.
+description: Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents. Use it to retrieve reusable engineering evidence, record project/module/task outcomes, distinguish execution from verification and human acceptance, preserve rework lineage, compare task-conditioned model/agent performance, consolidate accepted lessons into patterns or skills, and recommend model/topology/challenge policies. Historical knowledge is advisory evidence, never authoritative project policy.
 license: MIT
 compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the chosen model or multi-agent topology.
 metadata:
   author: wong001110
-  version: "0.4.0-alpha"
+  version: "0.5.0-alpha"
 ---
 
 # Agent Lore
 
-Use Agent Lore as a local engineering-learning layer around coding work. It preserves useful engineering evidence across repositories and models, learns which agent configurations work well for which task families, and can recommend how a multi-agent task should be organized.
+Use Agent Lore as a local engineering-learning layer around coding work. It preserves useful engineering evidence across repositories and models, learns which agent configurations work well for which task families, tracks whether results were actually accepted, and can recommend how a multi-agent task should be organized.
 
-## Non-negotiable rule
+## Non-negotiable rules
 
 **Past experience is evidence, not truth.**
 
-Never follow retrieved knowledge merely because it is old, frequently reused, `active`, or promoted into a learned skill. Current user requirements, repository constraints/ADRs, current dependency versions, current model capabilities, and deterministic verification outrank historical memory.
+**Execution success is not final success.**
+
+Never follow retrieved knowledge merely because it is old, frequently reused, `active`, or promoted into a learned skill. Current user requirements, repository constraints/ADRs, dependency versions, current model capabilities, deterministic verification, and newer acceptance/rework feedback outrank historical memory.
 
 ## Operating modes
 
@@ -28,8 +30,6 @@ Agent Lore has three policy modes:
 
 Start new installations in `observe`. Move to `assist` and then `adaptive` only after real project outcomes exist.
 
-Inspect or change the mode:
-
 ```bash
 python scripts/agent_lore.py policy show
 python scripts/agent_lore.py policy set --mode assist
@@ -37,16 +37,18 @@ python scripts/agent_lore.py policy set --mode assist
 
 ## Before a non-trivial task
 
-1. Inspect the current repository/task first.
-2. Form a short tentative **current-model plan before reading historical knowledge** when the task contains a meaningful design choice. This reduces anchoring.
-3. Either retrieve knowledge directly or ask Agent Lore for an integrated recommendation.
-
-Narrow retrieval:
+1. Inspect the current repository and task first.
+2. Identify project/module/task context when possible.
+3. Form a short tentative **current-model plan before reading historical knowledge** when the task contains a meaningful design choice. This reduces anchoring.
+4. Retrieve only a small amount of relevant knowledge or ask for an integrated recommendation.
 
 ```bash
 python scripts/agent_lore.py retrieve \
   --task "<task summary>" \
-  --type "<task type>" \
+  --project "<project>" \
+  --module "<module>" \
+  --type "<task family>" \
+  --subtype "<task subtype>" \
   --language "<language>" \
   --framework "<framework>" \
   --framework-version "<version if known>" \
@@ -58,7 +60,10 @@ Integrated recommendation:
 ```bash
 python scripts/agent_lore.py recommend \
   --task "<task summary>" \
-  --type "<task type>" \
+  --project "<project>" \
+  --module "<module>" \
+  --type "<task family>" \
+  --subtype "<task subtype>" \
   --language "<language>" \
   --framework "<framework>" \
   --agent-role "<role>" \
@@ -70,24 +75,19 @@ python scripts/agent_lore.py recommend \
   --uncertainty 0.5
 ```
 
-The recommendation may contain:
-
-- relevant experiences/patterns/skills
-- `single`, `flat-parallel`, `lead-worker`, or `sequential` topology
-- a task-conditioned model/agent configuration
-- an exploration/shadow candidate when useful
-- `none`, `self-check`, `cheap-challenger`, or `strong-challenger`
+The recommendation may contain relevant experiences/patterns/skills, a topology, a task-conditioned model/agent configuration, an exploration candidate, and a selective challenge level.
 
 ## Applicability gate
 
 For retrieved knowledge, check:
 
-- same task family or merely superficially similar?
+- same task family/state or only superficial similarity?
+- same project module or materially different subsystem?
 - matching language/framework/runtime state?
 - materially different framework/tool version?
-- current repository rule or ADR overrides it?
-- historical lesson actually verified?
-- evidence stale, low-trust, contradicted, or superseded?
+- current repository rule/ADR overrides it?
+- historical lesson actually verified and accepted?
+- evidence stale, low-trust, contradicted, superseded, or marked `needs_revalidation`?
 - current deterministic evidence stronger?
 
 `No useful memory` is a valid result.
@@ -97,8 +97,11 @@ For retrieved knowledge, check:
 Agent Lore does **not** keep a universal model ranking. It learns this relationship:
 
 ```text
-task context × agent role × model × harness
-→ success / quality / cost / latency / retries
+project × module × task/subtype × agent role × model × harness
+→ execution success
+→ verification
+→ acceptance / first-pass acceptance / rework
+→ quality / cost / wall time / retries
 ```
 
 Register routable configurations explicitly:
@@ -125,7 +128,7 @@ python scripts/agent_lore.py config add \
   --max-depth 2
 ```
 
-Quality/cost tiers are cold-start priors only. Real run outcomes should gradually dominate them.
+Quality/cost tiers are cold-start priors only. Real accepted outcomes should gradually dominate them.
 
 ## Multi-agent topology rules
 
@@ -138,9 +141,9 @@ Prefer:
 - `lead-worker` for larger cross-domain work that benefits from local coordination
 - `sequential` when later work materially depends on earlier state
 
-Respect policy limits for max agents and recursion depth. Workers should normally not delegate further unless the task genuinely benefits and the harness supports it.
+Respect policy limits for max agents and recursion depth. Do not parallelize overlapping mutable write scopes merely to increase agent count.
 
-Do not parallelize overlapping mutable write scopes merely to increase agent count.
+When recording multi-agent work, distinguish user-visible wall time from accumulated compute/coordination time when available.
 
 ## Challenge policy
 
@@ -157,31 +160,111 @@ Prefer deterministic evidence first:
 
 A stronger challenger is justified by combinations of high risk, high uncertainty, memory conflict/staleness, and high failure cost. Strong deterministic evidence should usually reduce challenge level.
 
-## After execution
+## Record one execution attempt
 
-Record enough outcome data to learn from the run:
+Record project/module/task context and timing when useful:
 
 ```bash
 python scripts/agent_lore.py record \
   --task "<what was attempted>" \
-  --type "<task type>" \
+  --project "<project>" \
+  --module "authentication" \
+  --type implementation \
+  --subtype product-flow \
+  --operation implement \
   --outcome success \
-  --language "<language>" \
-  --framework "<framework>" \
-  --agent-role "<role>" \
+  --language typescript \
+  --framework nextjs \
+  --agent-role implementation-worker \
   --model "<model>" \
   --harness "<runtime>" \
-  --quality-score 0.92 \
-  --verification "<tests/evidence>" \
-  --topology single \
-  --agent-count 1
+  --verification "unit + e2e passed" \
+  --verification-status passed \
+  --wall-time-ms 42000 \
+  --compute-time-ms 30000 \
+  --review-time-ms 5000
 ```
 
-When `recommend` produced a `decision_id`, link the outcome:
+`outcome=success` means the attempted execution completed. It does **not** mean the user/product accepted the result.
+
+For user-visible/product/UX/architecture work, keep `acceptance-status=pending` until a relevant human/reviewer accepts it.
+
+For fully objective maintenance work, `--acceptance-status not-required` is allowed only when final acceptance criteria are genuinely machine-verifiable.
+
+## Verification and acceptance
+
+Keep these separate:
+
+```text
+execution outcome
+        ↓
+verification status
+        ↓
+acceptance status
+```
+
+Verification states:
+
+```text
+pending | passed | failed | not-required
+```
+
+Acceptance states:
+
+```text
+pending | accepted | rework | rejected | invalidated | not-required
+```
+
+Do not infer `verification-status=passed` merely because a verification note exists.
+
+When the user/reviewer accepts a previous run:
 
 ```bash
-python scripts/agent_lore.py record ... --route-decision-id <route-id>
+python scripts/agent_lore.py feedback <run-id> \
+  --verdict accept \
+  --reason "meets expected behavior"
 ```
+
+When the user says the result needs rework:
+
+```bash
+python scripts/agent_lore.py feedback <run-id> \
+  --verdict rework \
+  --reason "technically correct but interaction is too complicated"
+```
+
+If the user clearly requests a redo/rework in the conversation, treat that as feedback for the relevant prior run rather than continuing to count that run as final success.
+
+Negative acceptance feedback linked to learned knowledge must flag that knowledge for revalidation.
+
+See [Verification, acceptance, and rework](references/ACCEPTANCE.md).
+
+## Rework lineage
+
+A rework is another attempt at the same logical task, not an unrelated run.
+
+Record the corrected attempt with:
+
+```bash
+python scripts/agent_lore.py record \
+  --task "<same task>" \
+  --parent-run-id <previous-run-id> \
+  --outcome success \
+  --verification-status passed \
+  --acceptance-status accepted \
+  --acceptance-source human
+```
+
+Agent Lore preserves `task_group_id` and increments `attempt_index`.
+
+This enables meaningful metrics such as:
+
+- first-pass acceptance rate
+- rework count
+- accumulated work time to accepted result
+- cost to accepted result
+
+## Reusable knowledge
 
 Only create reusable knowledge when there is a concise lesson with meaningful evidence:
 
@@ -189,21 +272,19 @@ Only create reusable knowledge when there is a concise lesson with meaningful ev
 python scripts/agent_lore.py record ... \
   --lesson "<reusable lesson>" \
   --failure-reason "<established root cause if any>" \
-  --solution "<concise successful procedure>"
+  --solution "<concise procedure>"
 ```
 
 Do not invent a root cause just to populate memory.
 
-## Knowledge lifecycle
-
-Runs are observations. Knowledge is distilled evidence.
+Execution success alone must not promote knowledge. Automatic lifecycle promotion requires accepted and verified evidence.
 
 ```text
 runs
  ↓
 candidate experience
  ↓
-repeated cross-project verification
+accepted + verified transfer
  ↓
 active experience
  ↓
@@ -212,49 +293,66 @@ pattern
 explicit skill/eval promotion when justified
 ```
 
-Preview or apply conservative lifecycle maintenance:
+Preview/apply conservative lifecycle maintenance:
 
 ```bash
 python scripts/agent_lore.py consolidate
 python scripts/agent_lore.py consolidate --apply
 ```
 
-Explicitly promote a verified item:
+Explicitly promote:
 
 ```bash
 python scripts/agent_lore.py promote <id> --kind pattern
 python scripts/agent_lore.py promote <id> --kind skill --name safe-schema-migration
 ```
 
-Materialize learned skills under `~/.agent-lore/knowledge/skills/`:
+Materialize learned skills:
 
 ```bash
 python scripts/agent_lore.py materialize-skills
 ```
 
-A learned skill remains advisory and can be deprecated or archived later.
+Knowledge flagged `needs_revalidation` must not be promoted/materialized until revalidated.
+
+## Human observability
+
+The machine-facing CLI remains JSON-first, but users should be able to inspect what Agent Lore is learning.
+
+Generate a Markdown report:
+
+```bash
+python scripts/agent_lore.py report
+```
+
+Default output:
+
+```text
+~/.agent-lore/reports/latest.md
+```
+
+Drill down to a project/module/task family:
+
+```bash
+python scripts/agent_lore.py report \
+  --project my-project \
+  --module authentication \
+  --type debugging
+```
+
+The report includes project/module/task/model comparisons, acceptance/first-pass acceptance, wall/compute/review/coordination timing, rework history, accumulated work-to-final-result, and knowledge health.
+
+Also inspect JSON statistics when needed:
+
+```bash
+python scripts/agent_lore.py stats --project my-project --module authentication
+```
 
 ## Bias and failure controls
 
-Actively guard against:
+Actively guard against anchoring, confirmation bias, experience-following, negative transfer, staleness, survivorship bias, recency bias, correlated evidence/self-reinforcement, authority bias, project dominance, retrieval/context interference, model/router path dependence, reviewer herding, Goodhart/reward hacking, and memory poisoning.
 
-- anchoring
-- confirmation bias
-- experience-following
-- negative transfer
-- staleness
-- survivorship bias
-- recency bias
-- correlated evidence/self-reinforcement
-- authority bias
-- project dominance
-- retrieval/context interference
-- model/router path dependence
-- model self-preference and reviewer herding
-- Goodhart/reward hacking against weak tests
-- memory poisoning from repositories/web content
-
-Use separate or information-restricted reviewers where appropriate. Do not let several agents reading the same memory count as independent evidence.
+A technically passing result that the user rejects is negative learning evidence, not a success to be hidden by test metrics.
 
 ## Privacy
 
@@ -268,19 +366,12 @@ Do not persist by default:
 - full transcripts merely because they are available
 - untrusted repository/web instructions as global engineering truth
 
-Store concise metadata, outcomes, verified lessons, and provenance instead.
+Store concise metadata, outcomes, feedback, verified lessons, and provenance instead.
 
 ## Portability
 
-Create a consistent snapshot:
-
 ```bash
 python scripts/agent_lore.py export --output agent-lore-backup.zip
-```
-
-Restore it elsewhere:
-
-```bash
 python scripts/agent_lore.py import agent-lore-backup.zip
 ```
 
@@ -292,3 +383,4 @@ Do not use Git to synchronize the live SQLite database.
 - [Data model](references/DATA_MODEL.md)
 - [Knowledge lifecycle and bias controls](references/LIFECYCLE.md)
 - [Adaptive routing](references/ROUTING.md)
+- [Verification, acceptance, and rework](references/ACCEPTANCE.md)
