@@ -11,11 +11,17 @@ def accepted_evidence_metrics(conn: sqlite3.Connection, experience_id: str) -> d
             COUNT(*) AS linked_runs,
             SUM(CASE WHEN r.verification_status IN ('passed','not-required') THEN 1 ELSE 0 END) AS verified_runs,
             SUM(CASE WHEN r.acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted_runs,
+            SUM(CASE
+                WHEN r.acceptance_status IN ('accepted','not-required')
+                 AND r.verification_status IN ('passed','not-required')
+                 AND r.outcome='success'
+                THEN 1 ELSE 0 END) AS accepted_verified_runs,
             SUM(CASE WHEN r.acceptance_status='rework' THEN 1 ELSE 0 END) AS rework_runs,
             SUM(CASE WHEN r.acceptance_status IN ('rejected','invalidated') THEN 1 ELSE 0 END) AS rejected_runs,
             COUNT(DISTINCT CASE
                 WHEN r.acceptance_status IN ('accepted','not-required')
                  AND r.verification_status IN ('passed','not-required')
+                 AND r.outcome='success'
                 THEN COALESCE(r.source_project, '') END) AS accepted_projects
         FROM experience_evidence e
         JOIN runs r ON r.id=e.run_id
@@ -24,6 +30,7 @@ def accepted_evidence_metrics(conn: sqlite3.Connection, experience_id: str) -> d
         (experience_id,),
     ).fetchone()
     accepted = int(row["accepted_runs"] or 0)
+    accepted_verified = int(row["accepted_verified_runs"] or 0)
     rework = int(row["rework_runs"] or 0)
     rejected = int(row["rejected_runs"] or 0)
     decided = accepted + rework + rejected
@@ -31,6 +38,7 @@ def accepted_evidence_metrics(conn: sqlite3.Connection, experience_id: str) -> d
         "linked_runs": int(row["linked_runs"] or 0),
         "verified_runs": int(row["verified_runs"] or 0),
         "accepted_runs": accepted,
+        "accepted_verified_runs": accepted_verified,
         "rework_runs": rework,
         "rejected_runs": rejected,
         "accepted_projects": int(row["accepted_projects"] or 0),
@@ -41,8 +49,6 @@ def accepted_evidence_metrics(conn: sqlite3.Connection, experience_id: str) -> d
 
 def independent_projects(conn: sqlite3.Connection, experience_id: str, fallback: str | None) -> int:
     metrics = accepted_evidence_metrics(conn, experience_id)
-    if metrics["accepted_projects"] == 0 and fallback and metrics["accepted_runs"] == 0:
-        return 0
     return int(metrics["accepted_projects"])
 
 
@@ -50,12 +56,12 @@ def lifecycle_metrics(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, A
     evidence_metrics = accepted_evidence_metrics(conn, row["id"])
     projects = int(evidence_metrics["accepted_projects"])
     freshness = freshness_value(row["last_verified_at"] or row["updated_at"])
-    accepted_evidence = min(1.0, evidence_metrics["accepted_runs"] / 5.0)
+    accepted_evidence = min(1.0, evidence_metrics["accepted_verified_runs"] / 5.0)
     project_diversity = min(1.0, projects / 3.0)
     reuse = min(1.0, int(row["reuse_count"]) / 5.0)
     verification_ratio = (
-        evidence_metrics["verified_runs"] / evidence_metrics["linked_runs"]
-        if evidence_metrics["linked_runs"]
+        evidence_metrics["accepted_verified_runs"] / evidence_metrics["accepted_runs"]
+        if evidence_metrics["accepted_runs"]
         else 0.5
     )
     utility = (
@@ -71,6 +77,7 @@ def lifecycle_metrics(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, A
     return {
         "acceptance_ratio": round(evidence_metrics["acceptance_ratio"], 4),
         "accepted_runs": evidence_metrics["accepted_runs"],
+        "accepted_verified_runs": evidence_metrics["accepted_verified_runs"],
         "rework_runs": evidence_metrics["rework_runs"],
         "rejected_runs": evidence_metrics["rejected_runs"],
         "verified_runs": evidence_metrics["verified_runs"],
@@ -96,8 +103,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
             if (
                 row["status"] == "candidate"
-                and metrics["accepted_runs"] >= 2
-                and metrics["verified_runs"] >= 2
+                and metrics["accepted_verified_runs"] >= 2
                 and metrics["independent_projects"] >= 2
                 and metrics["acceptance_ratio"] >= 0.75
                 and metrics["freshness"] >= 0.5
@@ -111,7 +117,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             if (
                 proposed_status == "active"
                 and row["kind"] == "experience"
-                and metrics["accepted_runs"] >= 4
+                and metrics["accepted_verified_runs"] >= 4
                 and metrics["independent_projects"] >= 3
                 and metrics["acceptance_ratio"] >= 0.80
                 and not metrics["needs_revalidation"]
@@ -135,8 +141,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
                 proposed_status == "active"
                 and proposed_kind in ("experience", "pattern")
                 and bool(row["solution_summary"])
-                and metrics["accepted_runs"] >= 4
-                and metrics["verified_runs"] >= 4
+                and metrics["accepted_verified_runs"] >= 4
                 and metrics["independent_projects"] >= 2
                 and metrics["acceptance_ratio"] >= 0.80
                 and not needs_revalidation
@@ -182,7 +187,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             "status": "applied" if args.apply else "preview",
             "count": len(actions),
             "changes": [item for item in actions if item["action"] != "keep" or item["needs_revalidation"] or item["skill_eligible"]],
-            "note": "Execution success alone cannot promote knowledge. Automatic promotion requires accepted and verified evidence.",
+            "note": "Execution success alone cannot promote knowledge. Automatic promotion requires accepted and verified evidence on the same supporting runs.",
         }
     )
     return 0
@@ -204,8 +209,8 @@ def cmd_promote(args: argparse.Namespace) -> int:
         metrics = lifecycle_metrics(conn, row)
         if row["needs_revalidation"]:
             raise ValueError("knowledge needs revalidation after negative feedback; do not promote it yet")
-        if metrics["accepted_runs"] < 1 or metrics["verified_runs"] < 1:
-            raise ValueError("promotion requires at least one accepted and verified supporting run")
+        if metrics["accepted_verified_runs"] < 1:
+            raise ValueError("promotion requires at least one supporting run that is both accepted and verified")
 
         target_kind = args.kind
         knowledge_name = row["knowledge_name"]
@@ -307,7 +312,7 @@ def materialize_skill(row: sqlite3.Row, root: Path, metrics: dict[str, Any]) -> 
     target = root / name
     target.mkdir(parents=True, exist_ok=True)
     description = row["lesson"].strip().replace("\n", " ")[:900]
-    body = f"""---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n# {name}\n\nThis is a locally learned Agent Lore skill. Treat it as advisory engineering evidence, not a project constraint.\n\n## Use when\n\n- Project module learned: {row['module'] or 'unspecified'}\n- Task type: {row['task_type'] or 'unspecified'}\n- Task subtype: {row['task_subtype'] or 'unspecified'}\n- Language: {row['language'] or 'unspecified'}\n- Framework: {row['framework'] or 'unspecified'}\n- Framework version learned: {row['framework_version'] or 'unspecified'}\n\n## Learned lesson\n\n{row['lesson']}\n\n## Procedure / successful approach\n\n{row['solution_summary'] or 'No explicit procedure was recorded.'}\n\n## Known failure mode\n\n{row['failure_reason'] or 'No specific failure mode was recorded.'}\n\n## Evidence metadata\n\n- Agent Lore knowledge id: `{row['id']}`\n- Recorded evidence count: {row['evidence_count']}\n- Accepted runs: {metrics['accepted_runs']}\n- Rework runs: {metrics['rework_runs']}\n- Rejected runs: {metrics['rejected_runs']}\n- Accepted projects: {metrics['independent_projects']}\n- Utility: {row['utility']}\n- Last verified: {row['last_verified_at'] or 'unknown'}\n\nBefore applying this skill, compare it against current project constraints, dependency versions, deterministic verification, and recent acceptance feedback.\n"""
+    body = f"""---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n# {name}\n\nThis is a locally learned Agent Lore skill. Treat it as advisory engineering evidence, not a project constraint.\n\n## Use when\n\n- Project module learned: {row['module'] or 'unspecified'}\n- Task type: {row['task_type'] or 'unspecified'}\n- Task subtype: {row['task_subtype'] or 'unspecified'}\n- Language: {row['language'] or 'unspecified'}\n- Framework: {row['framework'] or 'unspecified'}\n- Framework version learned: {row['framework_version'] or 'unspecified'}\n\n## Learned lesson\n\n{row['lesson']}\n\n## Procedure / successful approach\n\n{row['solution_summary'] or 'No explicit procedure was recorded.'}\n\n## Known failure mode\n\n{row['failure_reason'] or 'No specific failure mode was recorded.'}\n\n## Evidence metadata\n\n- Agent Lore knowledge id: `{row['id']}`\n- Recorded evidence count: {row['evidence_count']}\n- Accepted runs: {metrics['accepted_runs']}\n- Accepted + verified runs: {metrics['accepted_verified_runs']}\n- Rework runs: {metrics['rework_runs']}\n- Rejected runs: {metrics['rejected_runs']}\n- Accepted projects: {metrics['independent_projects']}\n- Utility: {row['utility']}\n- Last verified: {row['last_verified_at'] or 'unknown'}\n\nBefore applying this skill, compare it against current project constraints, dependency versions, deterministic verification, and recent acceptance feedback.\n"""
     (target / "SKILL.md").write_text(body, encoding="utf-8")
     return target / "SKILL.md"
 
@@ -321,7 +326,7 @@ def cmd_materialize(args: argparse.Namespace) -> int:
         ).fetchall()
         for row in rows:
             metrics = lifecycle_metrics(conn, row)
-            if row["needs_revalidation"] or metrics["accepted_runs"] < 1:
+            if row["needs_revalidation"] or metrics["accepted_verified_runs"] < 1:
                 continue
             files.append(str(materialize_skill(row, p["skills"], metrics)))
     emit(
@@ -330,7 +335,7 @@ def cmd_materialize(args: argparse.Namespace) -> int:
             "count": len(files),
             "skills_root": str(p["skills"]),
             "files": files,
-            "note": "Only active learned skills with accepted evidence and no revalidation flag are materialized.",
+            "note": "Only active learned skills with accepted+verified evidence and no revalidation flag are materialized.",
         }
     )
     return 0
