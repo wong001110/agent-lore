@@ -2,6 +2,7 @@
 
 from lore_common import *  # noqa: F401,F403
 
+
 def cmd_config_add(args: argparse.Namespace) -> int:
     now = utc_now()
     with connect() as conn:
@@ -124,7 +125,10 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
 
     specificity = 0
     for column, value in (
+        ("source_project", getattr(args, "project", None)),
+        ("module", getattr(args, "module", None)),
         ("task_type", getattr(args, "type", None)),
+        ("task_subtype", getattr(args, "subtype", None)),
         ("language", getattr(args, "language", None)),
         ("framework", getattr(args, "framework", None)),
     ):
@@ -136,9 +140,14 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
     query = f"""
         SELECT
             COUNT(*) AS runs,
-            SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes,
+            SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS execution_successes,
+            SUM(CASE WHEN verification_status IN ('passed','not-required') THEN 1 ELSE 0 END) AS verified,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
+            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
             AVG(CASE WHEN quality_score IS NOT NULL THEN quality_score END) AS avg_quality,
             AVG(cost_usd) AS avg_cost,
+            AVG(COALESCE(wall_time_ms, latency_ms)) AS avg_wall_time,
             AVG(latency_ms) AS avg_latency,
             AVG(retry_count) AS avg_retries
         FROM runs
@@ -147,15 +156,38 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
     """
     row = conn.execute(query, params).fetchone()
     runs = int(row["runs"] or 0)
-    successes = int(row["successes"] or 0)
-    success_rate = (successes + 1.0) / (runs + 2.0)
-    avg_quality = float(row["avg_quality"]) if row["avg_quality"] is not None else success_rate
-    confidence = min(1.0, runs / 10.0) * (0.7 + 0.1 * specificity)
+    execution_successes = int(row["execution_successes"] or 0)
+    accepted = int(row["accepted"] or 0)
+    acceptance_observed = int(row["acceptance_observed"] or 0)
+    execution_success_rate = (execution_successes + 1.0) / (runs + 2.0)
+    acceptance_rate = (accepted + 1.0) / (acceptance_observed + 2.0) if acceptance_observed else None
+    first_pass_rate = (
+        (int(row["first_pass_accepted"] or 0) + 1.0) / (acceptance_observed + 2.0)
+        if acceptance_observed
+        else None
+    )
+    acceptance_confidence = min(1.0, acceptance_observed / 10.0)
+    effective_success = (
+        acceptance_confidence * float(acceptance_rate)
+        + (1.0 - acceptance_confidence) * execution_success_rate
+        if acceptance_rate is not None
+        else execution_success_rate
+    )
+    avg_quality = float(row["avg_quality"]) if row["avg_quality"] is not None else effective_success
+    confidence = min(1.0, runs / 10.0) * min(1.0, 0.65 + 0.06 * specificity)
+    if acceptance_observed:
+        confidence = min(1.0, confidence + 0.15 * acceptance_confidence)
     return {
         "runs": runs,
-        "success_rate": success_rate,
+        "execution_success_rate": execution_success_rate,
+        "verified_runs": int(row["verified"] or 0),
+        "acceptance_observed": acceptance_observed,
+        "acceptance_rate": acceptance_rate,
+        "first_pass_acceptance_rate": first_pass_rate,
+        "effective_success": effective_success,
         "avg_quality": avg_quality,
         "avg_cost": float(row["avg_cost"]) if row["avg_cost"] is not None else None,
+        "avg_wall_time": float(row["avg_wall_time"]) if row["avg_wall_time"] is not None else None,
         "avg_latency": float(row["avg_latency"]) if row["avg_latency"] is not None else None,
         "avg_retries": float(row["avg_retries"]) if row["avg_retries"] is not None else None,
         "confidence": min(1.0, confidence),
@@ -192,7 +224,7 @@ def rank_configs(conn: sqlite3.Connection, args: argparse.Namespace, require_del
         candidates.append({"config": cfg, "stats": stats})
 
     observed_costs = [item["stats"]["avg_cost"] for item in candidates if item["stats"]["avg_cost"] is not None]
-    observed_latencies = [item["stats"]["avg_latency"] for item in candidates if item["stats"]["avg_latency"] is not None]
+    observed_times = [item["stats"]["avg_wall_time"] for item in candidates if item["stats"]["avg_wall_time"] is not None]
 
     ranked: list[dict[str, Any]] = []
     for item in candidates:
@@ -206,14 +238,16 @@ def rank_configs(conn: sqlite3.Connection, args: argparse.Namespace, require_del
 
         if stats["runs"]:
             cost_score = minmax_inverse(stats["avg_cost"], observed_costs)
-            latency_score = minmax_inverse(stats["avg_latency"], observed_latencies)
+            time_score = minmax_inverse(stats["avg_wall_time"], observed_times)
             retry_score = 1.0 / (1.0 + max(0.0, stats["avg_retries"] or 0.0))
+            first_pass = stats["first_pass_acceptance_rate"] if stats["first_pass_acceptance_rate"] is not None else stats["effective_success"]
             learned_score = (
-                0.50 * stats["success_rate"]
-                + 0.22 * stats["avg_quality"]
-                + 0.12 * cost_score
-                + 0.08 * latency_score
-                + 0.08 * retry_score
+                0.42 * stats["effective_success"]
+                + 0.18 * first_pass
+                + 0.18 * stats["avg_quality"]
+                + 0.10 * cost_score
+                + 0.07 * time_score
+                + 0.05 * retry_score
             )
             score = history_confidence * learned_score + (1.0 - history_confidence) * cold_score
         else:
@@ -231,9 +265,12 @@ def rank_configs(conn: sqlite3.Connection, args: argparse.Namespace, require_del
                 "score": round(score, 4),
                 "confidence": round(history_confidence, 4),
                 "historical_runs": stats["runs"],
-                "success_rate": round(stats["success_rate"], 4),
+                "execution_success_rate": round(stats["execution_success_rate"], 4),
+                "acceptance_rate": round(stats["acceptance_rate"], 4) if stats["acceptance_rate"] is not None else None,
+                "first_pass_acceptance_rate": round(stats["first_pass_acceptance_rate"], 4) if stats["first_pass_acceptance_rate"] is not None else None,
                 "avg_quality": round(stats["avg_quality"], 4),
                 "avg_cost_usd": stats["avg_cost"],
+                "avg_wall_time_ms": stats["avg_wall_time"],
                 "avg_latency_ms": stats["avg_latency"],
                 "avg_retries": stats["avg_retries"],
                 "source": "learned+bootstrap" if stats["runs"] else "bootstrap",
