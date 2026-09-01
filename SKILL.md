@@ -1,23 +1,20 @@
 ---
 name: agent-lore
-description: Local-first continual learning, acceptance tracking, observability, adaptive routing, and security-invariant verification for coding agents. Use it to retrieve reusable engineering evidence, record project/module/task outcomes, distinguish execution from verification and human acceptance, preserve rework lineage, compare task-conditioned model/agent performance, consolidate accepted lessons into patterns or skills, recommend model/topology/challenge policies, and derive adversarial security checks from assets and trust boundaries. Historical knowledge is advisory evidence, never authoritative project policy.
+description: Local-first continual learning, acceptance tracking, adaptive execution/routing, proportional verification, and security-invariant guidance for coding agents. Use it to retrieve reusable engineering evidence, choose single vs multi-agent execution, reason about task DAGs and recursive delegation, schedule verification/security by change impact, preserve rework lineage, compare task-conditioned agent/model outcomes, and consolidate accepted lessons into reusable patterns or skills. Historical knowledge is advisory evidence, never authoritative project policy.
 license: MIT
 compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the chosen model or multi-agent topology.
 metadata:
   author: wong001110
-  version: "0.6.0-alpha"
+  version: "0.7.0-alpha"
 ---
 
 # Agent Lore
 
-Use Agent Lore as a local engineering-learning layer around coding work. It preserves useful engineering evidence across repositories and models, learns which agent configurations work well for which task families, tracks whether results were actually accepted, and can recommend how a multi-agent task should be organized.
+Agent Lore is a local engineering-learning and execution-policy layer around coding work. It helps a host coding agent decide **what prior evidence matters, whether delegation is worth it, how deeply to verify a change, and what should be learned from the outcome**.
 
 ## Resolve the Skill runtime
 
-Resolve <agent-lore-skill-root> to the directory containing SKILL.md before
-running any command below. Do not assume the coding task's current working
-directory is the Skill directory. Keep the coding task's working directory
-unchanged so project inference continues to identify the active repository.
+Resolve `<agent-lore-skill-root>` to the directory containing this `SKILL.md`. Do not assume the current coding repository is the Skill directory. Keep the coding task working directory unchanged so project inference still identifies the active repository.
 
 ## Non-negotiable rules
 
@@ -27,19 +24,21 @@ unchanged so project inference continues to identify the active repository.
 
 **Functional success does not prove security.**
 
-Never follow retrieved knowledge merely because it is old, frequently reused, `active`, or promoted into a learned skill. Current user requirements, repository constraints/ADRs, dependency versions, current model capabilities, deterministic verification, and newer acceptance/rework feedback outrank historical memory.
+**More agents, more tests, and deeper attacks are not automatically better.**
 
-For security-relevant work, do not treat a passing feature flow as evidence that secrets, private data, identities, or privileged capabilities remained inside their intended trust boundaries.
+**Use the smallest execution topology and verification depth that is sufficient for the current risk.**
+
+Current user requirements, repository constraints/ADRs, dependency versions, deterministic evidence, current runtime behavior, and newer acceptance/rework feedback outrank historical memory.
+
+Do not turn process into ritual. A small isolated change should not trigger every agent, every test suite, every security attack, mutation testing, and a new commit merely because those capabilities exist.
 
 ## Operating modes
 
-Agent Lore has three policy modes:
+- `observe` — record recommendations/outcomes without changing execution.
+- `assist` — surface recommendations; parent agent/human remains the decision maker.
+- `adaptive` — apply recommendations when the host supports them and local budget/depth guardrails allow it.
 
-- `observe` — record recommendations and outcomes but do not change execution because of the router.
-- `assist` — surface recommendations; the parent coding agent/human remains the decision maker.
-- `adaptive` — apply recommendations when the host harness supports them and budget/depth guardrails allow it.
-
-Start new installations in `observe`. Move to `assist` and then `adaptive` only after real project outcomes exist.
+Start new installations in `observe`.
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" policy show
@@ -48,11 +47,12 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" policy set --mode assist
 
 ## Before a non-trivial task
 
-1. Inspect the current repository and task first.
-2. Identify project/module/task context when possible.
-3. Form a short tentative **current-model plan before reading historical knowledge** when the task contains a meaningful design choice. This reduces anchoring.
-4. Retrieve only a small amount of relevant knowledge or ask for an integrated recommendation.
-5. If the task touches secrets, identity, private data, authorization, external providers/origins, CI/CD, agent tools, MCP, cross-user/project state, or destructive capability, identify the security assets and trust boundaries before considering verification complete.
+1. Inspect the current repository/task first.
+2. Form a short current-model plan before retrieving historical knowledge when meaningful design choices exist.
+3. Identify project/module/task context.
+4. Retrieve a small amount of relevant knowledge.
+5. Derive a **TaskShape** when decomposition may matter.
+6. Derive **Change Impact** and applicable verification/security gates before deciding verification depth.
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
@@ -67,7 +67,7 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
   --limit 5
 ```
 
-Integrated recommendation:
+Integrated recommendation remains available:
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" recommend \
@@ -87,357 +87,490 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" recommend \
   --uncertainty 0.5
 ```
 
-The recommendation may contain relevant experiences/patterns/skills, a topology, a task-conditioned model/agent configuration, an exploration candidate, and a selective challenge level.
+The current CLI routing fields are coarse hints. The host should not blindly trust manually supplied `parallelizable`, `cross-domain`, `dependency-level`, or `estimated-subtasks`; inspect the task/repository and reason from TaskShape when possible.
 
-## Applicability gate
+## Applicability gate for learned knowledge
 
-For retrieved knowledge, check:
+Check:
 
 - same task family/state or only superficial similarity?
-- same project module or materially different subsystem?
-- matching language/framework/runtime state?
-- materially different framework/tool version?
+- same project/module or materially different subsystem?
+- matching stack/runtime/version?
 - current repository rule/ADR overrides it?
-- historical lesson actually verified and accepted?
-- evidence stale, low-trust, contradicted, superseded, or marked `needs_revalidation`?
+- evidence verified and accepted?
+- stale, low-trust, contradicted, superseded, or `needs_revalidation`?
 - current deterministic evidence stronger?
 
-`No useful memory` is a valid result.
+`No useful memory` is valid.
 
-## Model and sub-agent routing
+# Adaptive execution
 
-Agent Lore does **not** keep a universal model ranking. It learns this relationship:
+## Strong default: single agent
+
+Do not delegate unless expected benefit is clearly positive.
+
+Prefer one agent for:
+
+- small changes
+- tightly coupled work
+- one dominant workstream
+- heavily overlapping write scopes
+- work requiring nearly identical context across participants
+- ambiguous decomposition where coordination would add more uncertainty than value
+
+Conceptually:
 
 ```text
-project × module × task/subtype × agent role × model × harness
-→ execution success
-→ verification
-→ acceptance / first-pass acceptance / rework
-→ quality / cost / wall time / retries
+Delegation Gain
+= parallelism gain
++ context relief
++ specialization gain
++ independent-verification gain
+- coordination cost
+- integration risk
+- shared-state risk
+- duplicate work
+- extra compute/token cost
 ```
 
-Register routable configurations explicitly:
+If expected gain is not clearly positive: **do not delegate**.
 
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" config add \
-  --name fast-test-worker \
-  --model <model-id> \
-  --harness <runtime> \
-  --agent-role test-worker \
-  --quality-tier 4 \
-  --cost-tier 1
+## TaskShape and dependency DAG
+
+For work that benefits from decomposition, identify:
+
+```text
+candidate workstreams
+subtask dependencies
+read/write/contract scopes
+cross-domain boundaries
+integration points
+risk / failure cost
+verification surfaces
 ```
 
-For a lead/orchestrator-capable configuration:
+Represent dependencies as a DAG when useful.
 
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" config add \
-  --name backend-lead \
-  --model <model-id> \
-  --harness <runtime> \
-  --agent-role backend-lead \
-  --can-delegate \
-  --max-depth 2
+```text
+A backend ─────┐
+B frontend ────┼─> D integration
+C fixture ─────┘
+
+E migration -> F API -> G E2E
 ```
 
-Quality/cost tiers are cold-start priors only. Real accepted outcomes should gradually dominate them.
+Independent nodes with disjoint mutable scopes may run in the same **execution wave**. Dependent nodes remain serial. One task may therefore use a hybrid schedule.
 
-## Multi-agent topology rules
+## Coordination shape, schedule, and depth are separate
 
-Treat hierarchy as a tool, not the default.
+Think in these dimensions:
 
-Prefer:
+```text
+Coordination: single | manager-worker | hierarchical | peer-handoff
+Schedule:     serial | parallel | hybrid
+Depth:        0 | 1 | 2+
+Breadth:      children per level
+```
 
-- `single` for small work where coordination overhead would dominate
-- `flat-parallel` for truly independent/disjoint subtasks
-- `lead-worker` for larger cross-domain work that benefits from local coordination
-- `sequential` when later work materially depends on earlier state
+The current CLI legacy labels (`single`, `flat-parallel`, `lead-worker`, `sequential`) are compatibility signals, not a complete topology model.
 
-Respect policy limits for max agents and recursion depth. Do not parallelize overlapping mutable write scopes merely to increase agent count.
+## Main + sub-agent vs nested
 
-When recording multi-agent work, distinguish user-visible wall time from accumulated compute/coordination time when available.
+Depth 1 (`Main -> workers`) should handle most multi-agent coding work when several stable workstreams exist and each child can finish without local orchestration.
 
-For high-risk work, a dedicated security/adversarial worker can be useful, but the role name itself is not a control. Give that worker explicit assets, trust boundaries, and invariants to falsify rather than only asking for a generic security review.
+Nested delegation is only justified when a **child task itself** has meaningful decomposition and coordination value.
 
-## Challenge policy
+Every child should re-run the delegation test:
 
-Challenge is escalation, not a default second execution.
+```text
+route(child)
+  ├─ delegation gain insufficient -> child executes directly
+  └─ delegation gain positive     -> child may become Domain Lead
+```
 
-Prefer deterministic evidence first:
+`max_depth` is a safety ceiling, not a target.
 
-1. compile/typecheck/static checks
-2. focused tests
-3. E2E where relevant
-4. security invariant/adversarial checks where relevant
-5. mutation tests, including security-control mutation, where relevant
-6. performance/reliability checks where relevant
-7. additional model only for unresolved uncertainty/risk
+## Structural roles
 
-A stronger challenger is justified by combinations of high risk, high uncertainty, memory conflict/staleness, and high failure cost. Strong deterministic evidence should usually reduce challenge level.
+Prefer a small role vocabulary:
 
-## Security invariant gate
+- **Orchestrator/Main** — TaskShape, routing, integration, checkpoint decisions.
+- **Domain Lead** — local orchestration for a child workstream that truly needs nested delegation.
+- **Worker** — scoped implementation/research; normally does not delegate.
+- **Verifier** — independent deterministic verification where useful.
+- **Challenger** — critique for unresolved uncertainty/high risk.
+- **Security Red-Team** — attempts to falsify explicit security invariants in an isolated test environment.
 
-When a task can expose secrets/private data or exercise privileged authority, derive tests from the feature's **assets and trust boundaries** rather than relying on a generic scanner.
+Frontend/backend/database/infra/mobile/research are usually **specializations/capabilities**, not permanent agent classes.
 
-Minimum reasoning sequence:
+## Delegation contract
+
+Do not spawn a child without a bounded contract:
+
+```yaml
+objective:
+scope:
+excluded_scope:
+inputs:
+dependencies:
+read_scope:
+write_scope:
+contract_scope:
+tools:
+authority:
+expected_output:
+done_when:
+verification:
+budget:
+```
+
+The parent owns decomposition/integration. A child owns only its delegated scope unless explicitly authorized otherwise.
+
+Do not parallelize overlapping mutable write scopes merely to increase agent count.
+
+## Dynamic re-planning
+
+Routing may change after work begins. Re-evaluate when repository inspection, conflicts, scope growth, new dependencies, changed trust boundaries, or verification findings materially alter the TaskShape.
+
+Valid transitions include:
+
+```text
+single -> manager-worker
+parallel -> serial
+manager-worker -> collapse to single
+child -> nested delegation
+```
+
+Stop spawning/collapse when marginal coordination benefit turns negative.
+
+See [Adaptive routing](references/ROUTING.md) and [Adaptive execution, verification, and commit policy](references/EXECUTION.md).
+
+# Proportional verification
+
+## Verification is budgeted evidence, not maximum test count
+
+Choose verification from:
+
+```text
+change impact
++ blast radius
++ novelty
++ authority/trust-boundary change
++ failure cost
++ historical failure/escape evidence
+```
+
+Run cheap, high-information checks first. Escalate only when residual risk/uncertainty justifies it.
+
+```text
+cheap evidence
+   ↓
+enough confidence for current risk?
+   ├─ yes -> stop
+   └─ no  -> deeper gate
+```
+
+**Verification frequency != verification depth.**
+
+Cheap targeted checks may run frequently. Expensive E2E, broad regression, mutation, security red-team, and attack-chain suites should normally run at meaningful integration/feature/release checkpoints.
+
+## Verification tiers
+
+### V0 — trivial
+Docs/copy/style-only/local metadata. Usually no broad tests/security.
+
+### V1 — local
+Small localized behavior. Typecheck/lint/targeted unit as relevant.
+
+### V2 — feature
+Normal feature/module slice. Relevant unit + impacted integration; selected security invariants if a sensitive surface changed.
+
+### V3 — cross-boundary/high-risk
+Auth, credentials/providers, tenant boundaries, payments/webhooks, migrations, external contracts. Relevant integration/E2E + focused adversarial/failure-path/security checks.
+
+### V4 — critical/release
+Critical architecture/security/migration/release checkpoints. Broader regression, deeper mutation/red-team/rollback verification when applicable.
+
+Do not select tier from lines changed alone. A tiny authorization change can be higher risk than a large isolated demo.
+
+## Gate applicability
+
+Potential gates include:
+
+- functional
+- data integrity / migration
+- compatibility / contracts
+- concurrency / idempotency
+- security
+- performance / resource
+- operational / deployment / rollback
+
+Only activate applicable gates.
+
+Examples:
+
+```text
+UI copy                  -> V0/V1; no security
+API validation           -> V1/V2; targeted validation tests
+provider URL + API key   -> V3; credential/origin security invariants
+schema + external API    -> V3/V4; migration/rollback/contract/integration
+```
+
+## Multi-agent verification timing
+
+Workers should run cheap tests scoped to their work. Do not make every worker run the same full suite.
+
+```text
+Worker A -> targeted backend checks
+Worker B -> targeted frontend checks
+Worker C -> fixture checks
+              ↓
+        integration barrier
+              ↓
+      integrated verification
+```
+
+Reuse valid verification evidence while its relevant code/dependency assumptions remain unchanged; invalidate it when affected state changes.
+
+## Mutation testing
+
+Mutation is selective, not routine.
+
+Prefer it for critical guards such as:
+
+- authorization/security conditions
+- validation boundaries
+- idempotency/concurrency controls
+- migration compatibility
+- critical business rules
+
+Skip broad mutation for low-risk presentation-only changes.
+
+# Security and adversarial verification
+
+Security tests are derived from assets/trust boundaries, not run universally.
 
 ```text
 assets
-  → trust boundaries
-  → allowed flows
-  → invariants
-  → adversarial cases
-  → canary leakage checks
-  → security-control mutation where useful
+  -> trust boundaries
+  -> allowed flows
+  -> invariants
+  -> applicable attacks
+  -> synthetic canaries
+  -> security-control mutation when useful
 ```
 
-Examples of assets include API keys, OAuth/session tokens, private user data, identities, deployment credentials, internal files, privileged tools, and destructive actions.
-
-Examples of boundaries include user, tenant, project, agent, session, provider, network origin, CI job, process, MCP/tool server, and external service.
-
-A security invariant states what must remain true even when UI state is stale, failures occur, requests retry/redirect, concurrent state is reused, or untrusted content reaches an agent.
-
-Canonical invariant:
+Security/attack depth is adaptive:
 
 ```text
-A credential for provider/origin A must never be transmitted to provider/origin B unless an explicit policy authorizes that exact flow.
+none | smoke | focused | deep | adversarial
 ```
 
-For security-relevant features, consider the reusable regression families in `references/SECURITY.md`, including:
+Start with a small number of high-probability/high-impact attacks. Escalate attack variants/chains only when risk, novelty, findings, or residual uncertainty justify it.
 
-- provider/origin credential isolation
-- cross-origin redirect/retry leakage
-- log/error/telemetry leakage
-- build artifact and repository/history secret leakage
-- cross-user/project/tenant/session isolation
-- CI exposure to untrusted code
-- least-privilege credential scope
-- indirect prompt injection into privileged actions
-- MCP/tool poisoning
+Example: changing provider credentials/base URL should prioritize credential isolation, redirect/fallback behavior, stale state, logs, and origin binding. It should not automatically trigger unrelated SQL-upload-MCP attack suites.
 
-Prefer **synthetic unique canaries** over production secrets. Exercise failure paths and inspect observable sinks. A canary appearing in an unauthorized sink is a failure even when the functional flow passes.
+Prefer synthetic canaries over production secrets. A canary appearing in an unauthorized sink is a failure even if the feature otherwise works.
 
-Security-control mutation is useful when a concrete guard exists. Mutate or remove origin checks, authorization boundaries, secret redaction, allowlists, redirect restrictions, or tool permission checks. If the mutation survives, the security suite does not adequately prove the invariant.
+For agentic systems, test untrusted content -> privileged action paths when applicable: prompt injection, goal/tool manipulation, memory/context poisoning, MCP/tool poisoning, approval/permission bypass, cross-agent/context leakage, and excessive authority.
 
-Do not persist real secrets into Agent Lore evidence. Record concise results such as `SEC-001/002 passed with synthetic canaries`.
+Security-control mutation is valuable when a concrete guard exists. If removing/inverting the guard survives the security suite, verification is insufficient.
 
-See [Security invariants and adversarial verification](references/SECURITY.md).
+Do not persist real secrets in Agent Lore evidence.
 
-## Record one execution attempt
+See [Security invariants and adversarial verification](references/SECURITY.md) and [Adaptive execution, verification, and commit policy](references/EXECUTION.md).
 
-Record project/module/task context and timing when useful:
+# Checkpoints and commits
+
+**Agent completion is not a Git commit boundary.**
+
+Small related edits should accumulate into a coherent logical change before expensive integrated verification and final commit.
+
+Commit when:
+
+1. a coherent logical change unit is complete;
+2. workspace/integration state is stable;
+3. relevant focused verification passed;
+4. the next work has a meaningful semantic boundary.
+
+Internal worktree/checkpoint commits may be used by a harness for isolation/mergeability, but final history should prefer semantic commits and may squash/regroup internal checkpoints.
+
+Do not do this by default:
+
+```text
+small edit -> full suite -> commit
+small edit -> full suite -> commit
+child done -> commit
+```
+
+Prefer:
+
+```text
+related changes
++ related tests
++ integration
+      ↓
+proportional verification
+      ↓
+stable semantic commit
+```
+
+# Challenge policy
+
+Challenge is escalation, not a mandatory second agent.
+
+Prefer deterministic evidence first:
+
+1. cheap static/type checks
+2. focused tests
+3. impacted integration/E2E as warranted
+4. applicable security/adversarial checks
+5. selective mutation/performance/reliability checks
+6. another model only for unresolved uncertainty/risk
+
+Strong deterministic evidence should normally reduce challenge depth unless failure cost remains critical.
+
+# Record execution and acceptance
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
   --task "<what was attempted>" \
   --project "<project>" \
-  --module "authentication" \
+  --module "<module>" \
   --type implementation \
-  --subtype product-flow \
   --operation implement \
   --outcome success \
-  --language typescript \
-  --framework nextjs \
-  --agent-role implementation-worker \
   --model "<model>" \
   --harness "<runtime>" \
-  --verification "unit + e2e passed" \
-  --verification-status passed \
-  --wall-time-ms 42000 \
-  --compute-time-ms 30000 \
-  --review-time-ms 5000
+  --verification "<concise deterministic evidence>" \
+  --verification-status passed
 ```
 
-`outcome=success` means the attempted execution completed. It does **not** mean the user/product accepted the result.
-
-For user-visible/product/UX/architecture work, keep `acceptance-status=pending` until a relevant human/reviewer accepts it.
-
-For fully objective maintenance work, `--acceptance-status not-required` is allowed only when final acceptance criteria are genuinely machine-verifiable.
-
-For security-relevant work, do not set `verification-status=passed` merely because functional/unit/E2E checks pass when an applicable high-impact security invariant remains untested or failed.
-
-## Verification and acceptance
-
-Keep these separate:
+Keep separate:
 
 ```text
 execution outcome
-        ↓
+      ↓
 verification status
-        ↓
+      ↓
 acceptance status
 ```
 
-Verification states:
+`outcome=success` means execution completed, not that the product/user accepted it.
 
-```text
-pending | passed | failed | not-required
-```
+For user-visible/product/UX/architecture work, acceptance normally remains `pending` until relevant human/reviewer feedback.
 
-Acceptance states:
+For security-relevant work, do not mark verification passed while an applicable high-impact invariant is untested or failed.
 
-```text
-pending | accepted | rework | rejected | invalidated | not-required
-```
-
-Do not infer `verification-status=passed` merely because a verification note exists.
-
-When the user/reviewer accepts a previous run:
+Accept/rework:
 
 ```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> \
-  --verdict accept \
-  --reason "meets expected behavior"
+python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> --verdict accept
+python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> --verdict rework --reason "<reason>"
 ```
 
-When the user says the result needs rework:
-
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> \
-  --verdict rework \
-  --reason "technically correct but interaction is too complicated"
-```
-
-If the user clearly requests a redo/rework in the conversation, treat that as feedback for the relevant prior run rather than continuing to count that run as final success.
-
-Negative acceptance feedback linked to learned knowledge must flag that knowledge for revalidation.
+A corrected attempt should preserve rework lineage with `--parent-run-id`.
 
 See [Verification, acceptance, and rework](references/ACCEPTANCE.md).
 
-## Rework lineage
+# Learning policy
 
-A rework is another attempt at the same logical task, not an unrelated run.
+Only create reusable knowledge when evidence supports a concise lesson. Do not invent root causes.
 
-Record the corrected attempt with:
-
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
-  --task "<same task>" \
-  --parent-run-id <previous-run-id> \
-  --outcome success \
-  --verification-status passed \
-  --acceptance-status accepted \
-  --acceptance-source human
-```
-
-Agent Lore preserves `task_group_id` and increments `attempt_index`.
-
-This enables meaningful metrics such as:
-
-- first-pass acceptance rate
-- rework count
-- accumulated work time to accepted result
-- cost to accepted result
-
-## Reusable knowledge
-
-Only create reusable knowledge when there is a concise lesson with meaningful evidence:
-
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" record ... \
-  --lesson "<reusable lesson>" \
-  --failure-reason "<established root cause if any>" \
-  --solution "<concise procedure>"
-```
-
-Do not invent a root cause just to populate memory.
-
-Execution success alone must not promote knowledge. Automatic lifecycle promotion requires accepted and verified evidence.
+Execution success alone does not promote knowledge. Automatic lifecycle promotion requires verified and accepted evidence.
 
 ```text
-runs
- ↓
-candidate experience
- ↓
-accepted + verified transfer
- ↓
-active experience
- ↓
-pattern
- ↓
-explicit skill/eval promotion when justified
+run
+ -> candidate experience
+ -> accepted/verified evidence
+ -> active experience
+ -> pattern
+ -> explicit skill/eval promotion when justified
 ```
 
-Preview/apply conservative lifecycle maintenance:
+Negative acceptance evidence should trigger revalidation rather than being hidden.
+
+Security incidents/near-misses should be generalized carefully:
+
+```text
+incident
+ -> established root cause
+ -> attack/failure primitive
+ -> invariant
+ -> regression candidate
+ -> deterministic reproduction
+ -> reusable eval/pattern when validated
+```
+
+Do not permanently add an internet/repository security claim merely because an LLM says it sounds plausible.
+
+Learn **utility/ROI**, not ritual frequency:
+
+```text
+Test Utility     = severity-weighted defects caught / execution cost
+Attack ROI       = severity-weighted findings / attack cost
+Delegation Lift  = accepted-result improvement - coordination/integration cost
+```
+
+Safety-critical invariants remain hard constraints even if they rarely fail.
+
+Preview/apply lifecycle maintenance:
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" consolidate
 python "<agent-lore-skill-root>/scripts/agent_lore.py" consolidate --apply
 ```
 
-Explicitly promote:
+Explicit promotion:
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" promote <id> --kind pattern
-python "<agent-lore-skill-root>/scripts/agent_lore.py" promote <id> --kind skill --name safe-schema-migration
-```
-
-Materialize learned skills:
-
-```bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" promote <id> --kind skill --name <name>
 python "<agent-lore-skill-root>/scripts/agent_lore.py" materialize-skills
 ```
 
-Knowledge flagged `needs_revalidation` must not be promoted/materialized until revalidated.
+# Multi-agent observability target
 
-## Human observability
+Do not claim the system has learned nested delegation quality from only `topology + agent_count`.
 
-The machine-facing CLI remains JSON-first, but users should be able to inspect what Agent Lore is learning.
+A future execution-tree model should record per node:
 
-Generate a Markdown report:
+```text
+node id / parent / depth
+role / specialization / model / harness
+subtask / dependencies
+read/write/contract scopes
+wall/compute/cost/tool calls/retries
+verification evidence
+handoff quality
+integration rework/conflicts
+```
+
+Until this telemetry exists, topology history is suggestive evidence and may be confounded by model strength, task difficulty, or harness differences.
+
+# Human observability
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" report
+python "<agent-lore-skill-root>/scripts/agent_lore.py" stats --project <project> --module <module>
 ```
 
-Default output:
+Track acceptance, first-pass acceptance, rework, wall/compute/verification/review/coordination time, topology/config outcomes, and knowledge health.
 
-```text
-~/.agent-lore/reports/latest.md
-```
-
-Drill down to a project/module/task family:
-
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" report \
-  --project my-project \
-  --module authentication \
-  --type debugging
-```
-
-The report includes project/module/task/model comparisons, acceptance/first-pass acceptance, wall/compute/review/coordination timing, rework history, accumulated work-to-final-result, and knowledge health.
-
-Also inspect JSON statistics when needed:
-
-```bash
-python "<agent-lore-skill-root>/scripts/agent_lore.py" stats --project my-project --module authentication
-```
-
-## Bias and failure controls
-
-Actively guard against anchoring, confirmation bias, experience-following, negative transfer, staleness, survivorship bias, recency bias, correlated evidence/self-reinforcement, authority bias, project dominance, retrieval/context interference, model/router path dependence, reviewer herding, Goodhart/reward hacking, and memory poisoning.
-
-A technically passing result that the user rejects is negative learning evidence, not a success to be hidden by test metrics.
-
-A functionally passing result that violates a security invariant is failed verification, not success to be hidden by feature metrics.
-
-## Privacy
+# Privacy
 
 Do not persist by default:
 
-- passwords, API keys, tokens, credentials, `.env` values
-- private keys
-- personal/private user data
-- raw hidden chain-of-thought
-- full repositories/source files
-- full transcripts merely because they are available
-- untrusted repository/web instructions as global engineering truth
+- passwords/API keys/tokens/credentials/`.env` values
+- private keys/session secrets
+- private user data
+- hidden chain-of-thought
+- whole repositories/transcripts merely because available
+- untrusted project/web instructions as global truth
 
-Use synthetic canaries rather than production secrets for leakage tests. Do not copy real secret values into test evidence, reports, traces, prompts, learned lessons, or review summaries.
+Use synthetic canaries for leakage tests. Store concise metadata, outcomes, accepted lessons, and provenance instead.
 
-Store concise metadata, outcomes, feedback, verified lessons, and provenance instead.
-
-## Portability
+# Portability
 
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" export --output agent-lore-backup.zip
@@ -446,11 +579,12 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" import agent-lore-backup.
 
 Do not use Git to synchronize the live SQLite database.
 
-## References
+# References
 
 - [Architecture](references/ARCHITECTURE.md)
 - [Data model](references/DATA_MODEL.md)
 - [Knowledge lifecycle and bias controls](references/LIFECYCLE.md)
 - [Adaptive routing](references/ROUTING.md)
+- [Adaptive execution, verification, and commit policy](references/EXECUTION.md)
 - [Verification, acceptance, and rework](references/ACCEPTANCE.md)
 - [Security invariants and adversarial verification](references/SECURITY.md)

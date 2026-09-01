@@ -2,16 +2,16 @@
 
 Agent Lore treats security as a set of explicit invariants and trust boundaries, not as a generic instruction to "run a security scan".
 
-The objective is to catch classes of failures that can remain functionally correct while leaking authority or private data. A provider switch that still returns an AI response while sending the previous provider's API key to a new base URL is a canonical example.
+The objective is to catch classes of failures that can remain functionally correct while leaking authority, private data, or control. Security depth must still be proportional to the change: unrelated attack families should not run merely because a security framework exists.
 
 ## Security gate model
 
-For security-relevant work, define four things before implementation is considered verified:
+For security-relevant work, define:
 
 1. **Assets** — secrets, credentials, private data, identities, privileged tools, destructive capabilities.
 2. **Trust boundaries** — user, tenant, project, agent, provider, origin, process, CI job, MCP/tool server, external network.
 3. **Allowed flows** — which asset may move from which source to which sink under which condition.
-4. **Invariants** — conditions that must remain true even when UI state, retries, redirects, failures, concurrency, or untrusted inputs behave unexpectedly.
+4. **Invariants** — conditions that must remain true under stale state, retries, redirects, failures, concurrency, or untrusted inputs.
 
 Example:
 
@@ -24,42 +24,89 @@ Invariant: the credential must never cross the OpenRouter trust boundary.
 
 A passing functional test is not sufficient evidence for a security invariant.
 
-## Security verification sequence
+## Security applicability and depth
 
-Use the smallest deterministic checks that can prove the relevant invariant:
+Security is conditional. Derive applicable attack families from the change surface, trust boundaries, authority, blast radius, novelty, and failure cost.
+
+Use adaptive depth:
+
+```text
+none
+smoke
+focused
+deep
+adversarial
+```
+
+Examples:
+
+- UI copy/layout change -> normally `none`
+- local input validation -> `smoke` or `focused` for relevant boundary cases
+- provider/baseURL/credential change -> `focused` around origin/credential/log/retry flows
+- auth/tenant/payment/MCP/agent-authority change -> `focused` to `deep`
+- critical security architecture/release checkpoint -> `deep` or `adversarial`
+
+Start with a few high-probability/high-impact attacks. Escalate attack variants and multi-step chains only when risk, novelty, findings, or residual uncertainty justify the cost.
+
+Do not automatically run every security family for every change.
+
+## Security verification sequence
 
 ```text
 asset discovery
   -> trust-boundary model
+  -> allowed flows
   -> explicit invariants
-  -> adversarial cases
+  -> applicable attack families
+  -> smallest useful attack set
   -> canary leakage checks
   -> security-control mutation where useful
-  -> review
+  -> enough evidence?
+       yes -> stop
+       no  -> escalate depth
 ```
 
-Security verification can run beside ordinary unit/integration/E2E checks. It should block delivery when a high-impact invariant is violated.
+High-impact invariant failure blocks delivery. Passing unrelated security tests does not compensate for an unverified applicable invariant.
 
 ## Reusable regression catalog
 
-Start with these baseline scenarios when applicable:
+Baseline scenarios when applicable:
 
 - `SEC-001 Provider Credential Isolation` — credentials for provider/origin A must not be sent to provider/origin B.
-- `SEC-002 Cross-Origin Redirect Leakage` — redirects, proxy changes, scheme/host/port changes, and retry targets must not carry credentials across an unauthorized origin.
+- `SEC-002 Cross-Origin Redirect Leakage` — redirects, proxy changes, scheme/host/port changes, retries/fallbacks must not carry credentials across an unauthorized origin.
 - `SEC-003 Log/Error Secret Leakage` — secrets must not appear in stdout/stderr, structured logs, error objects, telemetry, traces, or crash reports.
 - `SEC-004 Build Artifact Secret Leakage` — secrets must not appear in browser bundles, source maps, generated files, containers/layers, caches, packages, or build artifacts.
 - `SEC-005 Repository/History Secret Leakage` — working tree, staged diff, patches, commits, and reachable history should be checked when credential exposure is plausible.
 - `SEC-006 Cross-Context Isolation` — user/tenant/project/agent/session/provider/memory/cache context must not bleed into another context.
 - `SEC-007 CI Untrusted-Code Secret Access` — untrusted PR/build code must not inherit deploy or repository secrets unless explicitly required and constrained.
-- `SEC-008 Least-Privilege Credential Scope` — granted capability should not materially exceed the task's required read/write/delete/admin scope.
+- `SEC-008 Least-Privilege Credential Scope` — granted capability should not materially exceed required read/write/delete/admin scope.
 - `SEC-009 Indirect Prompt Injection to Privileged Tool` — untrusted email/document/web/RAG/repository content must not silently cause privileged reads, writes, sends, or exfiltration.
 - `SEC-010 MCP/Tool Poisoning` — tool descriptions, responses, changed metadata, or hidden arguments must not expand authority or exfiltrate data without policy checks.
 
-This catalog is a seed, not an exhaustive checklist. Prefer deriving tests from current assets and trust boundaries over mechanically running irrelevant scenarios.
+Extend the catalog from validated failures/near-misses, not from speculation alone.
+
+## Broader agentic attack families
+
+When relevant, also consider:
+
+- goal hijacking
+- memory/context poisoning
+- agent identity/impersonation
+- inter-agent trust exploitation
+- cascading multi-agent compromise
+- approval/human-gate bypass
+- excessive autonomy/authority
+- denial-of-wallet/resource exhaustion
+- skill/configuration poisoning
+- tool permission escalation
+- persistent prompt injection
+- sandbox/host escape
+
+These are not universal mandatory tests. Apply them when the changed system exposes the corresponding surface.
 
 ## Canary leakage testing
 
-Use synthetic unique values instead of real credentials whenever possible:
+Use synthetic unique values instead of real credentials:
 
 ```text
 CANARY_PROVIDER_A_8f2ac91
@@ -67,14 +114,14 @@ CANARY_PROJECT_A_912aa03
 CANARY_USER_ALICE_f7201a
 ```
 
-Run the relevant workflow, including failure paths, then search all observable sinks that the test environment can inspect:
+Inspect relevant observable sinks:
 
 - outbound HTTP/tool requests
 - stdout/stderr and application logs
 - telemetry/traces/error reporting
 - generated/build artifacts and source maps
 - agent/tool arguments and model context when inspectable
-- cache, memory, persistence, and cross-project/session outputs
+- cache, memory, persistence, cross-project/session outputs
 
 A canary found in an unauthorized sink is a security failure even when the feature otherwise works.
 
@@ -82,7 +129,7 @@ Do not use production secrets as canaries.
 
 ## Credential and origin binding
 
-Treat a credential as part of a credential profile rather than a global reusable string:
+Treat a credential as part of a credential profile:
 
 ```text
 CredentialProfile {
@@ -95,16 +142,16 @@ CredentialProfile {
 
 Changing provider or trust origin must not silently retain authority. Known providers should prefer fixed/allowlisted origins. Request-layer checks should enforce the boundary even if UI state is stale or incorrect.
 
-Adversarial cases should include, where applicable:
+Applicable adversarial cases may include:
 
-- hostname/subdomain changes
-- scheme or port changes
-- custom base URL changes
-- redirects and redirect chains
+- hostname/subdomain change
+- scheme/port change
+- custom base URL
+- redirects/redirect chains
 - retry/fallback targets
 - proxy changes
 - stale persisted configuration
-- provider switching without editing the credential field
+- provider switch without editing credential
 
 ## Cross-context isolation
 
@@ -115,20 +162,24 @@ Project A -> CANARY_A
 Project B -> CANARY_B
 ```
 
-Exercise cache reuse, retries, cancellation, concurrent requests, session resume, agent delegation, RAG/memory retrieval, and tool calls. Seeing `CANARY_A` from Project B is a failure.
+Exercise cache reuse, retries, cancellation, concurrency, session resume, agent delegation, RAG/memory retrieval, and tool calls when those mechanisms are in scope.
 
-The same pattern applies to users, tenants, agents, sessions, providers, and other security boundaries.
+Seeing `CANARY_A` from Project B is a failure.
+
+The same pattern applies to users, tenants, agents, sessions, providers, and other boundaries.
 
 ## Untrusted input to privileged action
 
-For agentic systems, distinguish information access from authority to act.
+For agentic systems:
 
 ```text
 secret read permission != secret transmit permission
 untrusted content != trusted instruction
 ```
 
-Test hostile instructions embedded in repositories, issues, documents, web pages, emails, RAG content, tool descriptions, and tool responses. The goal is to verify that untrusted content cannot silently cause a privileged tool call or move protected data to an unauthorized sink.
+When applicable, test hostile instructions embedded in repositories, issues, documents, web pages, emails, RAG content, tool descriptions, tool responses, memory, or inter-agent messages.
+
+The objective is to verify that untrusted content cannot silently cause privileged reads/writes/sends or move protected data to an unauthorized sink.
 
 ## Permission differential testing
 
@@ -139,69 +190,125 @@ required: read one repository
 actual token: repository admin + workflow write + delete
 ```
 
-Flag materially excessive scope for review. For high-impact credentials, prefer narrow resources, narrow actions, expiration, and independent rotation.
+Flag materially excessive scope. For high-impact credentials, prefer narrow resources/actions, expiration, and independent rotation.
 
 ## Security-control mutation
 
-Mutation testing becomes more valuable when aimed at explicit security controls.
+Mutation testing is selective. Use it when an explicit security control is important enough to prove.
 
 Examples:
 
 - invert/remove an origin comparison
 - remove credential clearing on provider change
-- bypass a tenant/user authorization condition
+- bypass tenant/user authorization
 - disable secret redaction
 - widen an allowlist
 - enable credential forwarding across redirects
-- remove an agent/tool permission check
+- remove agent/tool permission checks
 
-If such a mutation survives, the security test suite does not adequately prove the invariant.
+If such a mutation survives, the security suite does not adequately prove the invariant.
 
-Do not mutate production credentials or external systems. Run these tests in isolated fixtures.
+Do not mutate production credentials or external systems. Use isolated fixtures.
 
 ## Failure-path testing
 
-Security defects frequently appear outside the happy path. Exercise relevant failures such as:
+When relevant, exercise:
 
-- timeout and retry
+- timeout/retry
 - malformed provider response
-- 4xx/5xx errors
-- connection reset/DNS/TLS errors
-- cancellation and resume
-- concurrent requests
+- 4xx/5xx
+- connection reset/DNS/TLS failure
+- cancellation/resume
+- concurrency
 - serialization/debug output
-- partial initialization and stale persisted state
+- partial initialization/stale state
 
-Check that failures do not broaden authority or expose protected values.
+Failure paths must not broaden authority or expose protected values.
 
-## Multi-agent responsibilities
+## Red-team execution model
 
-A dedicated security/adversarial role may be useful for high-risk work, but a role name is not a control by itself.
+A Security Red-Team role is useful only when the risk warrants it.
 
-The security worker should receive the current feature's assets, trust boundaries, and invariants, then attempt to falsify them. It should avoid relying solely on implementation intent.
+Conceptual flow:
 
-The lead/orchestrator should block advancement when a high-impact invariant fails. Human escalation is appropriate when the correct trust boundary, permission scope, or product-security tradeoff is genuinely ambiguous.
+```text
+Threat/Invariant model
+        ↓
+Attack planner
+        ↓
+small high-value attack set
+        ↓
+isolated execution
+        ↓
+invariant judge
+        ↓
+PASS -> stop when residual risk is acceptable
+FAIL -> reproduce, fix, generate regression candidate
+        ↓
+optional attack mutation / chain escalation
+```
+
+The red-team should attempt to falsify invariants instead of merely reviewing implementation intent.
+
+## Multi-step attack chains
+
+For deep/adversarial checkpoints, allow bounded chains such as:
+
+```text
+poison repository/RAG content
+ -> agent trusts instruction
+ -> invokes tool/MCP
+ -> reads protected data
+ -> calls outbound sink
+ -> exfiltration
+```
+
+Attack-chain depth and count must be budgeted. Do not run deep chains on unrelated low-risk changes.
+
+## Continual security learning
+
+A discovered incident/near-miss should enter a security-specific learning path:
+
+```text
+incident / escape
+  -> established root cause
+  -> attack/failure primitive
+  -> generalized invariant
+  -> regression candidate
+  -> deterministic reproduction
+  -> accepted/verified eval or pattern
+```
+
+Do not automatically promote internet/repository claims to permanent security lore. New tests require reproducible or otherwise strong validated evidence and must remain scoped to applicable contexts.
+
+Track conceptual utility:
+
+```text
+Attack ROI = severity-weighted findings / execution cost
+```
+
+Use ROI to schedule optional attacks, but do not retire mandatory safety-critical invariants merely because they rarely fail.
 
 ## Recording security evidence
 
 Record concise evidence, not secrets.
 
-Good verification notes:
+Good:
 
 ```text
 SEC-001/002 passed with synthetic canaries; provider switch, cross-origin redirect, and retry target did not forward credentials.
 ```
 
-Bad verification notes:
+Bad:
 
 ```text
 Tested with production API key sk-...
 ```
 
-Never persist real API keys, tokens, private keys, session cookies, or secret values into Agent Lore memory, reports, traces, or learned knowledge.
+Never persist real API keys, tokens, private keys, session cookies, or secret values into Agent Lore memory, reports, traces, prompts, or learned knowledge.
 
 ## Historical incident patterns
 
-The regression catalog is informed by recurring industry failure patterns such as credential forwarding across redirects, credentials committed to public repositories, over-scoped cloud tokens, CI environment-variable theft, secrets exposed in logs/build artifacts, cross-user cache isolation failures, indirect prompt injection, excessive agent permissions, and poisoned tool/MCP metadata.
-
 Historical incidents are prompts for adversarial thinking, not proof that a current project has the same vulnerability. Current repository evidence and deterministic verification remain authoritative.
+
+See [Adaptive execution, verification, and commit policy](EXECUTION.md) for verification tiers, attack budgets, early stopping, batching, and checkpoint timing.

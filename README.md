@@ -1,207 +1,161 @@
 # Agent Lore
 
-**Local-first continual learning, acceptance tracking, observability, adaptive routing, and security-invariant verification for coding agents.**
+**Local-first continual learning, acceptance tracking, adaptive multi-agent execution, proportional verification, and security-invariant guidance for coding agents.**
 
-Agent Lore turns coding-agent outcomes into reusable engineering evidence across projects, modules, models, and agent roles. It also tracks whether changes were technically verified and actually accepted, preserves rework lineage, compares model performance by real task context, recommends model/topology/challenge policies, and derives adversarial security checks from explicit assets and trust boundaries.
+Agent Lore is an engineering-learning layer that helps a coding harness reuse accepted evidence, choose an execution shape, route models/roles, decide how much verification is justified, and learn from rework/failures without treating history as authority.
 
-> Status: **Integrated Alpha / v0.6.0-alpha (Phase 1–4 + acceptance/observability + security invariant gate)**. Cross-device synchronization/service mode remains deferred to Phase 5.
-
-## What is implemented
-
-```text
-Phase 1 — Local foundation
-  SQLite · retrieve · record · stats · export/import
-
-Phase 2 — Knowledge lifecycle
-  candidate/active/deprecated/archive
-  evidence lineage · utility/freshness · conservative consolidation
-  pattern/skill/eval promotion · learned skill materialization
-
-Phase 3 — Capability intelligence
-  project × module × task/subtype × role × model × harness
-  execution · verification · acceptance · quality · cost · timing · retries
-
-Phase 4 — Adaptive multi-agent
-  observe / assist / adaptive modes
-  model/agent config router
-  single / flat-parallel / lead-worker / sequential topology router
-  selective challenge escalation
-  routing-decision → outcome feedback loop
-
-Acceptance / observability extension
-  execution ≠ verification ≠ acceptance
-  accept / rework / reject / invalidate feedback
-  parent-run rework lineage + attempt_index
-  first-pass acceptance + rework-aware benchmark
-  Markdown project/module/task reports
-
-Security invariant extension
-  asset + trust-boundary modeling
-  explicit allowed-flow invariants
-  adversarial security regression families
-  synthetic canary leakage testing
-  cross-context isolation checks
-  security-control mutation guidance
-  indirect prompt-injection / MCP-tool boundary checks
-```
+> Status: **Integrated Alpha / v0.7.0-alpha**. The learning/routing CLI is implemented; the richer TaskShape/DAG/recursive-execution-tree model is currently expressed as Skill policy for host agents and is a target for future runtime/data-model upgrades.
 
 ## Core principles
 
-**Past experience is evidence, not truth.**
-
-**Agent execution success is not final delivery success.**
-
-**Functional success does not prove security.**
-
-A run may compile and pass tests yet still be rejected because the requirement, product behavior, UX, maintainability, integration result, or security boundary is wrong. Agent Lore therefore keeps execution, verification, and acceptance separate.
-
 ```text
-execution outcome
-        ↓
-verification status
-        ↓
-acceptance status
-        ↓
-learning outcome
+Past experience is evidence, not truth.
+Execution success is not final success.
+Functional success does not prove security.
+More agents/tests/attacks are not automatically better.
+Use the smallest topology and verification depth sufficient for current risk.
 ```
 
-Automatic knowledge promotion requires accepted and verified evidence.
+## What Agent Lore covers
 
-## Security invariant gate
+### Learning and acceptance
 
-Security testing is modeled as explicit information-flow and authority invariants rather than a generic instruction to run a scanner.
+```text
+run
+ -> deterministic verification
+ -> acceptance / rework / rejection
+ -> reusable evidence
+ -> pattern / skill / eval promotion when justified
+```
+
+It preserves rework lineage, first-pass acceptance, cost/timing, and revalidation signals instead of counting every technically successful run as a clean success.
+
+### Adaptive execution
+
+Single agent is the strong default. Delegation is only worthwhile when expected parallelism/context/specialization/independent-verification gain exceeds coordination, integration, shared-state, duplicate-work, and compute costs.
+
+For non-trivial work, reason from a TaskShape:
+
+```text
+workstreams
++ dependency DAG
++ read/write/contract scopes
++ risk and failure cost
++ integration points
++ verification/security surfaces
+```
+
+Separate:
+
+```text
+coordination shape: single | manager-worker | hierarchical | peer-handoff
+schedule:           serial | parallel | hybrid
+depth:              0 | 1 | 2+
+```
+
+Nested delegation is recursive: every child must independently justify further delegation. `max_depth` is a safety ceiling, not a target.
+
+See [`references/ROUTING.md`](references/ROUTING.md).
+
+### Execution waves, verification timing, and commits
+
+Independent DAG nodes with disjoint mutable scopes may execute in parallel waves. Workers run cheap scoped checks; expensive integrated checks are normally amortized at integration/feature/release checkpoints.
+
+Verification is proportional:
+
+```text
+V0 trivial
+V1 local
+V2 feature
+V3 cross-boundary / high-risk
+V4 critical / release
+```
+
+Gate families are conditional: functional, migration/data integrity, compatibility/contracts, concurrency/idempotency, security, performance/resource, operational/rollback.
+
+Security/attack depth is also adaptive:
+
+```text
+none | smoke | focused | deep | adversarial
+```
+
+Small related edits should normally accumulate into a coherent stable batch before expensive verification and final semantic commit. Child-agent completion is not automatically a Git commit boundary.
+
+See [`references/EXECUTION.md`](references/EXECUTION.md).
+
+### Security invariants
+
+Security is modeled as:
 
 ```text
 assets
-  → trust boundaries
-  → allowed flows
-  → invariants
-  → adversarial cases
-  → synthetic canaries
-  → security-control mutation where useful
+ -> trust boundaries
+ -> allowed flows
+ -> invariants
+ -> applicable attack families
+ -> synthetic canaries
+ -> selective security-control mutation
 ```
 
-A canonical example is provider credential isolation: changing an AI provider or base URL must not silently send the previous provider's credential to the new origin. The same model generalizes to logs, redirects, CI secrets, build artifacts, cross-user/project state, prompt-injection-to-tool paths, and MCP/tool poisoning.
+The baseline regression catalog includes provider credential isolation, redirect leakage, logs/artifacts/history leaks, cross-context isolation, CI secret exposure, least privilege, indirect prompt injection, and MCP/tool poisoning. Agentic attack families can extend to goal/context/memory poisoning, approval bypass, inter-agent trust exploitation, excessive authority, denial-of-wallet, skill/config poisoning, and sandbox boundaries when applicable.
 
-The baseline regression catalog starts with:
+Security incidents/near-misses may become new regression candidates only after root cause and deterministic/strong validation; internet/repository claims are not automatically promoted into permanent lore.
 
-- `SEC-001 Provider Credential Isolation`
-- `SEC-002 Cross-Origin Redirect Leakage`
-- `SEC-003 Log/Error Secret Leakage`
-- `SEC-004 Build Artifact Secret Leakage`
-- `SEC-005 Repository/History Secret Leakage`
-- `SEC-006 Cross-Context Isolation`
-- `SEC-007 CI Untrusted-Code Secret Access`
-- `SEC-008 Least-Privilege Credential Scope`
-- `SEC-009 Indirect Prompt Injection → Privileged Tool`
-- `SEC-010 MCP/Tool Poisoning`
+See [`references/SECURITY.md`](references/SECURITY.md).
 
-See [`references/SECURITY.md`](references/SECURITY.md) for the full security-invariant and adversarial-verification model.
+## Structural agent roles
 
-## Repository layout
+Prefer a small role vocabulary:
 
-```text
-agent-lore/
-├─ SKILL.md
-├─ scripts/
-│  ├─ agent_lore.py
-│  ├─ lore_common.py
-│  ├─ lore_memory.py
-│  ├─ lore_feedback.py
-│  ├─ lore_lifecycle.py
-│  ├─ lore_registry.py
-│  ├─ lore_routing.py
-│  ├─ lore_ops.py
-│  └─ lore_report.py
-├─ references/
-│  ├─ ARCHITECTURE.md
-│  ├─ DATA_MODEL.md
-│  ├─ LIFECYCLE.md
-│  ├─ ROUTING.md
-│  ├─ ACCEPTANCE.md
-│  └─ SECURITY.md
-├─ tests/
-│  └─ test_smoke.py
-├─ .github/workflows/test.yml
-├─ LICENSE
-└─ README.md
-```
+- **Orchestrator/Main** — TaskShape, routing, integration, checkpoints
+- **Domain Lead** — local orchestration when a child workstream truly needs nested delegation
+- **Worker** — scoped implementation/research
+- **Verifier** — independent deterministic verification
+- **Challenger** — independent critique for unresolved risk/uncertainty
+- **Security Red-Team** — bounded adversarial attempts against explicit invariants
 
-Runtime data stays outside the repository:
+Frontend/backend/database/infra/mobile/research are usually specializations/capabilities, not permanent agent classes.
 
-```text
-~/.agent-lore/
-├─ agent-lore.db
-├─ knowledge/
-│  └─ skills/
-├─ reports/
-│  └─ latest.md
-├─ traces/
-├─ archive/
-└─ exports/
-```
+## Current CLI
 
-Override with `AGENT_LORE_HOME`.
-
-## Install as an Agent Skill
-
-Agent Lore uses the open Agent Skills `SKILL.md` format. Put this repository in a project/user/custom skill directory supported by your coding agent.
-
-For DeepSeek Harness, one project-level location is:
-
-```text
-<project>/.agents/skills/agent-lore/
-```
-
-Initialize or upgrade the local database:
+Initialize:
 
 ```bash
 python scripts/agent_lore.py init
 ```
 
-The CLI uses only the Python standard library (Python 3.10+).
-
-## Start safely
-
 Fresh installations default to `observe`:
 
 ```bash
 python scripts/agent_lore.py policy show
+python scripts/agent_lore.py policy set --mode assist
 ```
 
-Then move to `assist` and `adaptive` only after real outcomes exist:
+Retrieve knowledge:
 
 ```bash
-python scripts/agent_lore.py policy set --mode assist
-python scripts/agent_lore.py policy set --mode adaptive
+python scripts/agent_lore.py retrieve \
+  --task "safe enum migration" \
+  --project my-project \
+  --module data-model \
+  --type migration \
+  --language typescript \
+  --framework prisma
 ```
 
-## Register model/agent configurations
-
-Cold-start tiers are priors, not benchmark claims.
+Register an agent/model configuration:
 
 ```bash
 python scripts/agent_lore.py config add \
-  --name fast-implementation-worker \
-  --model my-fast-model \
+  --name fast-worker \
+  --model my-model \
   --harness my-harness \
   --agent-role implementation-worker \
   --quality-tier 4 \
   --cost-tier 1
 ```
 
-Delegation-capable lead:
-
-```bash
-python scripts/agent_lore.py config add \
-  --name backend-lead \
-  --model my-lead-model \
-  --agent-role backend-lead \
-  --can-delegate \
-  --max-depth 2
-```
-
-## Integrated recommendation
+Integrated recommendation:
 
 ```bash
 python scripts/agent_lore.py recommend \
@@ -209,21 +163,14 @@ python scripts/agent_lore.py recommend \
   --project my-project \
   --module authentication \
   --type test-generation \
-  --subtype boundary-validation \
-  --language typescript \
-  --framework nextjs \
-  --agent-role test-worker \
-  --complexity medium \
-  --risk low \
   --parallelizable yes \
   --dependency-level low \
-  --estimated-subtasks 3 \
-  --uncertainty 0.25
+  --estimated-subtasks 3
 ```
 
-The result includes relevant knowledge, topology, selected config, alternatives, exploration candidate, challenge level, and a `decision_id`.
+The current CLI topology fields are coarse compatibility signals. v0.7 policy requires the host to reason about TaskShape/DAG, recursive delegation, execution waves, and proportional verification rather than blindly treating those flags as complete analysis.
 
-## Record an execution attempt
+Record an attempt:
 
 ```bash
 python scripts/agent_lore.py record \
@@ -231,220 +178,93 @@ python scripts/agent_lore.py record \
   --project my-project \
   --module authentication \
   --type implementation \
-  --subtype product-flow \
   --operation implement \
   --outcome success \
-  --model my-fast-model \
-  --harness my-harness \
-  --agent-role implementation-worker \
-  --verification "unit + e2e passed" \
-  --verification-status passed \
-  --wall-time-ms 42000 \
-  --compute-time-ms 30000 \
-  --review-time-ms 5000
+  --model my-model \
+  --verification "focused unit + integration passed" \
+  --verification-status passed
 ```
 
-For user-visible/product work, acceptance remains `pending` until relevant human/reviewer feedback exists.
-
-For a completely machine-verifiable task, record `--acceptance-status not-required` only when human/product judgment is genuinely unnecessary.
-
-For security-relevant work, functional/unit/E2E success is not enough when an applicable high-impact invariant remains untested or failed.
-
-## Accept / rework / reject
-
-Accept:
+Acceptance/rework:
 
 ```bash
-python scripts/agent_lore.py feedback <run-id> \
-  --verdict accept \
-  --reason "meets expected behavior"
+python scripts/agent_lore.py feedback <run-id> --verdict accept
+python scripts/agent_lore.py feedback <run-id> --verdict rework --reason "<reason>"
 ```
 
-Rework:
-
-```bash
-python scripts/agent_lore.py feedback <run-id> \
-  --verdict rework \
-  --reason "technically correct but interaction is too complicated"
-```
-
-Record the corrected attempt as the same logical task:
-
-```bash
-python scripts/agent_lore.py record \
-  --task "simplify refresh token controls" \
-  --parent-run-id <previous-run-id> \
-  --outcome success \
-  --verification-status passed \
-  --acceptance-status accepted \
-  --acceptance-source human
-```
-
-Agent Lore preserves the task group and increments the attempt index. This makes first-pass acceptance, rework count, accumulated work-to-final-result, and cost-to-final-result measurable.
-
-Negative feedback on a run linked to learned knowledge flags that knowledge as `needs_revalidation` rather than silently trusting it.
-
-## Human-readable report
-
-Generate a Markdown report:
-
-```bash
-python scripts/agent_lore.py report
-```
-
-Default:
-
-```text
-~/.agent-lore/reports/latest.md
-```
-
-Drill down:
-
-```bash
-python scripts/agent_lore.py report \
-  --project my-project \
-  --module authentication \
-  --type debugging
-```
-
-The report contains:
-
-- project/module/task/subtype model benchmark
-- execution success vs acceptance
-- first-pass acceptance and rework count
-- quality and cost
-- wall/compute/verification/review/coordination timing
-- rework/task-group history
-- accumulated recorded work time to final accepted result
-- knowledge health and revalidation backlog
-
-JSON stats remain available:
-
-```bash
-python scripts/agent_lore.py stats --project my-project --module authentication
-```
-
-## Knowledge lifecycle
-
-Record a reusable lesson only when evidence exists:
-
-```bash
-python scripts/agent_lore.py record \
-  --task "safe enum migration" \
-  --project project-a \
-  --module data-model \
-  --type migration \
-  --outcome success \
-  --verification "migration test + e2e passed" \
-  --verification-status passed \
-  --acceptance-status accepted \
-  --acceptance-source reviewer \
-  --lesson "Prefer a transitional migration when existing rows depend on legacy values" \
-  --solution "add transitional value, migrate data, then remove legacy value"
-```
-
-Lifecycle maintenance:
+Lifecycle:
 
 ```bash
 python scripts/agent_lore.py consolidate
 python scripts/agent_lore.py consolidate --apply
-```
-
-Promotion:
-
-```bash
-python scripts/agent_lore.py promote <knowledge-id> --kind pattern
-python scripts/agent_lore.py promote <knowledge-id> --kind skill --name safe-enum-migration
+python scripts/agent_lore.py promote <id> --kind pattern
+python scripts/agent_lore.py promote <id> --kind skill --name <name>
 python scripts/agent_lore.py materialize-skills
 ```
 
-Execution success by itself does not qualify for automatic promotion.
+Reports:
 
-## Model and topology benchmark semantics
-
-Agent Lore does not claim that one model is globally better. It asks:
-
-```text
-In this project/module/task context,
-which model/harness/role produced accepted results
-with the best quality / time / cost / rework profile?
+```bash
+python scripts/agent_lore.py report
+python scripts/agent_lore.py stats --project my-project --module authentication
 ```
 
-This matters because a fast first generation can still be slower overall if it needs repeated correction.
-
-Prefer metrics such as:
-
-- acceptance rate
-- first-pass acceptance rate
-- reworks
-- wall time
-- accumulated work to accepted result
-- cost to accepted result
-- quality
-- deterministic verification
-
-rather than raw generation latency alone.
-
-## Multi-agent guardrails
-
-Default policy:
-
-```text
-max_depth = 2
-max_agents = 6
-```
-
-Supported topology recommendations:
-
-- `single`
-- `flat-parallel`
-- `lead-worker`
-- `sequential`
-
-Wall time and accumulated compute/coordination time should be recorded separately when possible; multi-agent can reduce user waiting time while increasing total compute/cost.
-
-For high-risk work, a security/adversarial worker can independently attempt to falsify explicit invariants. The lead/orchestrator should block advancement on a high-impact invariant failure rather than treating it as an informational review comment.
-
-## Portability
+Portability:
 
 ```bash
 python scripts/agent_lore.py export --output agent-lore-backup.zip
 python scripts/agent_lore.py import agent-lore-backup.zip
 ```
 
-SQLite is backed up consistently before export. Import creates a safety backup and upgrades older schemas when opened.
+## Repository layout
 
-## Phase 5 remains deferred
+```text
+agent-lore/
+├─ SKILL.md
+├─ scripts/
+├─ references/
+│  ├─ ARCHITECTURE.md
+│  ├─ DATA_MODEL.md
+│  ├─ LIFECYCLE.md
+│  ├─ ROUTING.md
+│  ├─ EXECUTION.md
+│  ├─ ACCEPTANCE.md
+│  └─ SECURITY.md
+├─ tests/
+├─ .github/workflows/test.yml
+└─ README.md
+```
 
-Not implemented yet:
+Runtime state remains under `~/.agent-lore/` by default and should not be synchronized through Git.
 
-- remote source of truth
-- automatic multi-device synchronization
-- event replication/local cache
-- long-running MCP/daemon service
-- object storage for large traces
+## Current limitations / next runtime work
 
-Until then, portable ZIP transfer is the supported device migration path.
+The policy is ahead of the runtime data model in several areas. Future implementation should add:
+
+- automatic TaskShape extraction instead of relying primarily on caller-supplied routing hints
+- explicit task DAG and execution waves
+- coordination shape/schedule/depth as separate data
+- per-node execution tree, parent/depth, role/model, scopes, costs, handoffs and integration rework
+- per-node model/config selection for heterogeneous teams
+- recursive runtime routing and dynamic collapse/replan
+- verification/gate/attack-budget telemetry and Test Utility / Attack ROI
+- knowledge scope (task/module/project/stack/global) and appropriately scoped promotion
+- executable red-team/security learner rather than policy guidance alone
+
+Do not claim these are fully automated until the runtime/host actually supplies them.
 
 ## Success criteria
 
-The goal is not a large memory database. Measure whether Agent Lore improves real delivery:
+Measure accepted delivery lift rather than agent activity:
 
 ```text
-Memory Lift = performance(with Agent Lore) - model-only baseline
+Memory Lift     = performance(with Agent Lore) - model-only baseline
+Delegation Lift = accepted-result improvement - coordination/integration cost
+Test Utility    = severity-weighted defects caught / verification cost
+Attack ROI      = severity-weighted findings / attack cost
 ```
 
-Also track:
-
-- acceptance / first-pass acceptance lift
-- retry and rework reduction
-- time/cost to accepted result
-- challenge ROI
-- topology overhead/conflicts
-- per-task model configuration utility
-- security invariant regression escapes / catches where evidence exists
-
-If memory or routing produces negative lift, revalidate or disable it rather than trusting history because it exists.
+If added memory, hierarchy, verification, or attacks produce negative lift, narrow/revalidate the policy rather than keeping them because they exist.
 
 ## License
 

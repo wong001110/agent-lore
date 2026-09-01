@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Shared schema and utilities for Agent Lore.
 
-Integrated Alpha (Phase 1-4) plus human acceptance/observability:
+Integrated Alpha (Phase 1-4) plus human acceptance/observability and adaptive
+execution/security policy guidance:
 - local persistence and portability
 - evidence lifecycle and learned knowledge
 - task-conditioned agent/model capability observations
@@ -29,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-APP_VERSION = "0.5.0-alpha"
+APP_VERSION = "0.7.0-alpha"
 SCHEMA_VERSION = "5"
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_+.#-]{2,}")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
