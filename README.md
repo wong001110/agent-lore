@@ -1,190 +1,336 @@
 # Agent Lore
 
-**Local-first continual learning for coding agents.**
+**Local-first continual learning and adaptive routing for coding agents.**
 
-Agent Lore turns verified coding-agent outcomes into reusable engineering experience across projects, models, and agent roles. The foundation model remains replaceable; the learned engineering evidence stays local and portable.
+Agent Lore turns verified coding-agent outcomes into reusable engineering evidence across projects, models, and agent roles. It can also learn which agent configuration is cost-effective for a task and recommend how multi-agent work should be organized.
 
-> Status: **experimental / v0.1 foundation**. The first milestone intentionally focuses on local learning, retrieval, evidence capture, portability, and model-performance observations before adaptive routing or cloud sync.
+> Status: **Integrated Alpha / v0.4.0-alpha (Phase 1–4)**. Local learning, knowledge lifecycle, capability intelligence, and adaptive routing are implemented. Cross-device synchronization/service mode remains deferred.
 
-## Why
-
-Coding agents repeatedly rediscover the same failure modes. A project-local memory can reduce repetition inside one repository, but it does not preserve engineering lessons across projects or across different coding agents.
-
-Agent Lore adds a local learning layer:
+## What is implemented
 
 ```text
-Project A ─┐
-Project B ─┼─> Coding Agent ─> Agent Lore ─> reusable evidence
-Project C ─┘                      │
-                                 ├─ experiences
-                                 ├─ failures / solutions
-                                 ├─ model + agent observations
-                                 └─ later: patterns / skills / routing
+Phase 1 — Local foundation
+  SQLite · retrieve · record · stats · export/import
+
+Phase 2 — Knowledge lifecycle
+  candidate/active/deprecated/archive
+  evidence lineage · utility/freshness · conservative consolidation
+  pattern/skill/eval promotion · learned skill materialization
+
+Phase 3 — Capability intelligence
+  task × role × model × harness outcomes
+  quality · success · cost · latency · retries
+  delegation capability registry
+
+Phase 4 — Adaptive multi-agent
+  observe / assist / adaptive modes
+  model/agent config router
+  single / flat-parallel / lead-worker / sequential topology router
+  selective challenge escalation
+  routing-decision → outcome feedback loop
 ```
 
-The goal is not to make historical memory authoritative. **Past experience is evidence, not truth.** Current project constraints, current framework versions, deterministic verification, and the current model's reasoning remain first-class inputs.
+Phase 5 (not implemented) is remote sync/service mode.
 
-## Design principles
+## Core principle
 
-- **Local-first** — operational data lives under `~/.agent-lore/` by default.
-- **Cross-project** — one local knowledge store can learn from many repositories.
-- **Agent/model agnostic** — Codex, DeepSeek Harness, Claude Code, or another compatible agent can contribute to and reuse the same local evidence.
-- **Evidence over authority** — retrieved experience is advisory and may be stale, mismatched, or wrong.
-- **Selective memory** — do not turn every tool call or transcript into active knowledge.
-- **Privacy by default** — store concise metadata and lessons; do not persist secrets or raw source code by default.
-- **Portable** — export a consistent snapshot to move the local learning state to another device manually.
-- **Measurable** — retain task/model/agent outcome metadata so later versions can learn which configurations are cost-effective for which tasks.
+**Past experience is evidence, not truth.**
+
+Agent Lore is designed to avoid becoming a stale rulebook. Current project constraints, dependency versions, current-model reasoning, and deterministic tests remain authoritative inputs. Historical knowledge may be challenged, revalidated, deprecated, archived, or replaced.
+
+## Architecture
+
+```text
+                       Coding agent / harness
+                Codex · DeepSeek Harness · others
+                              │
+                              ▼
+                       Agent Lore Skill
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        ▼                     ▼                     ▼
+ Engineering knowledge   Capability registry    Adaptive router
+ experiences/patterns    model/role/harness     model/topology/challenge
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              ▼
+                      ~/.agent-lore/
+                      agent-lore.db
+                      knowledge/skills/
+                      archive/ exports/
+```
+
+The GitHub repository contains the learning engine and skill instructions. Personal learned data stays outside the repository.
 
 ## Repository layout
 
 ```text
 agent-lore/
-├─ SKILL.md                    # Agent Skills entry point
+├─ SKILL.md
 ├─ scripts/
-│  └─ agent_lore.py            # dependency-free local CLI
+│  ├─ agent_lore.py          # CLI entry
+│  ├─ lore_common.py         # schema/utilities
+│  ├─ lore_memory.py         # retrieve/record
+│  ├─ lore_lifecycle.py      # consolidate/promote/materialize
+│  ├─ lore_registry.py       # agent/model capability registry
+│  ├─ lore_routing.py        # topology/model/challenge routing
+│  └─ lore_ops.py            # stats/export/import/doctor
 ├─ references/
 │  ├─ ARCHITECTURE.md
 │  ├─ DATA_MODEL.md
-│  └─ LIFECYCLE.md
+│  ├─ LIFECYCLE.md
+│  └─ ROUTING.md
 ├─ tests/
 │  └─ test_smoke.py
+├─ .github/workflows/test.yml
 ├─ LICENSE
 └─ README.md
 ```
 
-User data is deliberately kept outside the repository:
+Runtime data:
 
 ```text
 ~/.agent-lore/
 ├─ agent-lore.db
 ├─ knowledge/
+│  └─ skills/
 ├─ traces/
 ├─ archive/
 └─ exports/
 ```
 
-Set `AGENT_LORE_HOME` to override this location.
+Override with `AGENT_LORE_HOME`.
 
 ## Install as an Agent Skill
 
-Agent Lore follows the open Agent Skills `SKILL.md` format. Install or copy this repository as an `agent-lore` skill directory in the location supported by your agent client.
+Agent Lore uses the open Agent Skills `SKILL.md` format. Place the repository as an `agent-lore` skill directory in a project/user/custom skill location supported by your coding agent.
 
-For DeepSeek Harness, a project-level installation can be placed at:
+For DeepSeek Harness, one project-level location is:
 
 ```text
 <project>/.agents/skills/agent-lore/
 ```
 
-Other Agent Skills clients should use their documented project or user skill location.
-
-Then initialize the local store:
+Initialize or upgrade the local database:
 
 ```bash
 python scripts/agent_lore.py init
 ```
 
-No network service or external Python package is required for the v0.1 CLI.
+The CLI uses only the Python standard library (Python 3.10+).
 
-## CLI
+## Start safely: observe → assist → adaptive
 
-Initialize:
+Fresh installations default to `observe`:
 
 ```bash
-python scripts/agent_lore.py init
+python scripts/agent_lore.py policy show
 ```
 
-Retrieve related experience before a non-trivial coding decision:
+After collecting outcomes:
 
 ```bash
-python scripts/agent_lore.py retrieve \
-  --task "add a safe PostgreSQL enum migration" \
-  --type migration \
+python scripts/agent_lore.py policy set --mode assist
+```
+
+Only enable autonomous application when you trust the observed results and host-harness integration:
+
+```bash
+python scripts/agent_lore.py policy set --mode adaptive
+```
+
+The skill itself does not magically spawn arbitrary external models. It recommends a configuration/topology; the host coding harness must support executing it.
+
+## Register agent/model configurations
+
+Cold-start tiers are priors, not benchmark claims.
+
+```bash
+python scripts/agent_lore.py config add \
+  --name fast-implementation-worker \
+  --model my-fast-model \
+  --harness my-harness \
+  --agent-role implementation-worker \
+  --quality-tier 4 \
+  --cost-tier 1
+```
+
+Delegation-capable lead:
+
+```bash
+python scripts/agent_lore.py config add \
+  --name backend-lead \
+  --model my-lead-model \
+  --agent-role backend-lead \
+  --can-delegate \
+  --max-depth 2
+```
+
+List configurations:
+
+```bash
+python scripts/agent_lore.py config list
+```
+
+## Integrated recommendation
+
+```bash
+python scripts/agent_lore.py recommend \
+  --task "implement three independent validation checks" \
+  --type test-generation \
   --language typescript \
-  --framework prisma
+  --framework nextjs \
+  --agent-role test-worker \
+  --complexity medium \
+  --risk low \
+  --parallelizable yes \
+  --dependency-level low \
+  --estimated-subtasks 3 \
+  --uncertainty 0.25
 ```
 
-Record a verified run and, when useful, a reusable lesson:
+The output includes:
+
+- relevant knowledge (small retrieval budget)
+- recommended topology
+- recommended registered agent/model configuration
+- alternative configurations
+- optional exploration/shadow candidate
+- challenge level
+- a `decision_id`
+
+Feed the real outcome back:
 
 ```bash
 python scripts/agent_lore.py record \
-  --task "change user-role enum without breaking existing rows" \
+  --task "implement three independent validation checks" \
+  --type test-generation \
+  --outcome success \
+  --model my-fast-model \
+  --harness my-harness \
+  --agent-role test-worker \
+  --topology flat-parallel \
+  --agent-count 3 \
+  --quality-score 0.93 \
+  --cost-usd 0.05 \
+  --route-decision-id <decision-id>
+```
+
+That closes the routing learning loop.
+
+## Knowledge lifecycle
+
+Record a reusable lesson only when evidence exists:
+
+```bash
+python scripts/agent_lore.py record \
+  --task "safe enum migration" \
   --type migration \
   --outcome success \
   --language typescript \
   --framework prisma \
-  --model deepseek-v4-flash \
-  --agent-role implementation-worker \
   --verification "migration test + e2e passed" \
-  --lesson "Prefer transitional enum migrations when existing rows depend on legacy values" \
+  --lesson "Prefer a transitional migration when existing rows depend on legacy values" \
   --solution "add transitional value, migrate data, then remove legacy value"
 ```
 
-Inspect observed model/agent outcomes:
+Preview consolidation:
 
 ```bash
-python scripts/agent_lore.py stats
+python scripts/agent_lore.py consolidate
 ```
 
-Create a consistent portable snapshot:
+Apply conservative lifecycle changes:
+
+```bash
+python scripts/agent_lore.py consolidate --apply
+```
+
+Promote deliberately:
+
+```bash
+python scripts/agent_lore.py promote <knowledge-id> --kind pattern
+python scripts/agent_lore.py promote <knowledge-id> --kind skill --name safe-enum-migration
+python scripts/agent_lore.py materialize-skills
+```
+
+Old knowledge can be retained without normal retrieval:
+
+```bash
+python scripts/agent_lore.py deprecate <id> --reason "framework now has a safer native API"
+python scripts/agent_lore.py archive <id> --reason "stale low-utility historical case"
+```
+
+## Challenge is selective
+
+Agent Lore does not recommend a second model for every task. Its challenge score considers risk, uncertainty, failure cost, historical conflict/staleness, and deterministic evidence.
+
+```text
+low value       → none
+small uncertainty → self-check
+meaningful risk → cheap challenger
+critical conflict/uncertainty → strong challenger
+```
+
+Deterministic gates should be preferred when they can answer the question.
+
+## Multi-agent guardrails
+
+Default policy keeps hierarchy shallow:
+
+```text
+max_depth = 2
+max_agents = 6
+```
+
+The router distinguishes:
+
+- `single`
+- `flat-parallel`
+- `lead-worker`
+- `sequential`
+
+It should not create parallel workers for strongly dependent tasks or overlapping mutable write scopes merely to increase concurrency.
+
+## Portability
 
 ```bash
 python scripts/agent_lore.py export --output agent-lore-backup.zip
-```
-
-Restore it on another device:
-
-```bash
 python scripts/agent_lore.py import agent-lore-backup.zip
 ```
 
-## v0.1 scope
+SQLite is backed up consistently before export. Import creates a safety backup of an existing local database and upgrades older Agent Lore schemas when opened.
 
-Included now:
+## What remains for Phase 5
 
-- local SQLite knowledge catalog
-- cross-project experience retrieval
-- verified run/outcome recording
-- basic duplicate aggregation
-- model/agent performance observations
-- portable export/import
-- privacy and provenance rules
+Not part of the current alpha:
 
-Intentionally deferred:
+- remote source of truth
+- automatic multi-device synchronization
+- local cache/event replication
+- long-running MCP/daemon service
+- object storage for large traces
 
-- automatic pattern → skill promotion
-- embeddings/vector database
-- autonomous challenge routing
-- adaptive model routing
-- multi-agent topology routing
-- MCP/local daemon
-- cross-device synchronization
-- cloud database/object storage
+Until then, manual portable ZIP transfer is the supported device migration path.
 
-Those are later layers only after the core question is measurable: **does retrieved engineering experience improve future agent outcomes without degrading current-model judgment?**
+## Success criteria
 
-## Learning model
+The goal is not a large memory database. Measure whether the system actually helps:
 
 ```text
-Agent run
-   ↓
-verification
-   ↓
-run evidence
-   ↓
-reusable lesson? ── no ──> statistics only
-   │
-  yes
-   ↓
-candidate experience
-   ↓
-reuse + revalidation
-   ↓
-active experience
-   ↓
-later: pattern / skill / eval / archive
+Memory Lift = performance(with Agent Lore) - model-only baseline
 ```
 
-See [`references/LIFECYCLE.md`](references/LIFECYCLE.md) for the intended knowledge lifecycle and anti-bias rules.
+Also track:
+
+- retry reduction
+- success/quality lift
+- cost and latency
+- challenge ROI
+- topology overhead/conflicts
+- per-task model configuration utility
+
+If memory or routing produces negative lift, it should be revalidated or disabled rather than trusted because it is historical.
 
 ## License
 
