@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Agent Lore local data
+.agent-lore/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+agent-lore-*.zip
+agent-lore-backup*.zip
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
