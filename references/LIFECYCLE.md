@@ -1,6 +1,6 @@
-# Knowledge Lifecycle
+# Knowledge Lifecycle and Bias Controls
 
-Agent Lore should learn selectively. More stored memories do not automatically mean a better agent.
+Agent Lore should become more selective as data grows. A larger memory database is not automatically a better engineering system.
 
 ## Lifecycle
 
@@ -10,238 +10,121 @@ run
 verified outcome
  ↓
 reusable lesson?
- ├─ no → statistics only
+ ├─ no → capability/routing statistics only
  └─ yes
       ↓
-   candidate
+ candidate experience
       ↓
- repeated reuse / revalidation
+ repeated cross-project evidence
       ↓
-    active
+ active experience
       ↓
- ┌────┼─────────────┐
- │    │             │
- ▼    ▼             ▼
-pattern/skill   deprecated   archived
+ generalized pattern
+      ↓
+ explicit skill or regression-eval promotion
 ```
 
-V0.1 only implements basic run recording, candidate experiences, manual status, duplicate aggregation, and active/candidate retrieval. Promotion automation comes later.
+At any point, knowledge may be deprecated or archived.
 
-## Candidate
+## Conservative automatic maintenance
 
-A new lesson starts as `candidate` because one successful run is not enough to turn a historical solution into strong global guidance.
+`consolidate` calculates success ratio, independent project count, evidence count, reuse count, freshness, and utility.
 
-A candidate should contain:
+With `--apply`, it can safely promote a strongly repeated candidate to `active`, generalize strong cross-project experience into a `pattern`, or archive an extremely stale single-use candidate. It intentionally does not automatically turn everything into a Skill or automatically deprecate disputed knowledge.
 
-- concise task context
-- lesson
-- verification evidence
-- stack/version when relevant
-- source project label
-- outcome support counts
+## Skill promotion
 
-## Active
+A Skill is a stronger procedural artifact. Promote it explicitly when there is a useful procedure, evidence transfers across comparable contexts, current versions still match, and it has not shown meaningful recent contradiction. Materialized Skills remain advisory.
 
-An experience may become `active` when it has meaningful evidence that it transfers beyond the original incident.
+## Old cases
 
-Possible future promotion signals:
-
-- reused successfully more than once
-- validated in more than one project
-- current environment still matches
-- not contradicted by recent runs
-- measurable positive Memory Lift
-
-`active` still means **advisory**, never mandatory.
-
-## Deprecated
-
-Deprecate when:
-
-- a framework/tool version makes the old workaround unnecessary
-- a newer approach consistently outperforms it
-- a model/harness upgrade changes the optimal strategy
-- the old lesson is now known to be incomplete or harmful
-
-Deprecated knowledge should be preserved with a reason and, when possible, a `superseded_by` relationship in later schema versions.
-
-## Archived
-
-Archive when knowledge is:
-
-- stale
-- duplicated by a stronger pattern
-- rarely useful
-- low utility
-- historically interesting but unsuitable for normal retrieval
-
-Archive is preferred to deletion because old cases can still be useful for regression evaluation, legacy projects, or understanding why a decision existed.
-
-## Knowledge compression
-
-Do not keep 100 near-identical active experiences just because they came from 100 runs.
-
-Desired direction:
+Historical cases should gradually move into the right representation:
 
 ```text
-many runs
-   ↓
-fewer unique experiences
-   ↓
-fewer patterns
-   ↓
-small reliable skill set
+raw run → statistic
+       ↘ experience
+       ↘ pattern
+       ↘ skill
+       ↘ eval case
+       ↘ archive
 ```
 
-Repeated evidence should strengthen or challenge a compact claim rather than inflate the number of independent-looking memories.
-
-## What old cases become
-
-Historical cases can be transformed into different assets:
-
-- **statistics** — aggregate model/agent performance
-- **experience** — a reusable lesson tied to context
-- **pattern** — a generalized engineering observation
-- **skill** — a validated reusable procedure
-- **eval case** — an important regression/failure scenario
-- **archive** — preserved evidence outside normal retrieval
-
-Not every case should remain an active experience.
+Do not keep hundreds of near-identical active memories. Aggregate evidence and preserve representative or important failures.
 
 ## Retrieval budget
 
-Context size is a cost and a source of interference.
+Default planning retrieval should be small, normally 3–5 items. Retrieve again only when task state materially changes. The number of stored records must not determine context size.
 
-Default guidance:
-
-```text
-planning:       ≤ 5 experiences
-implementation: only directly relevant procedural evidence
-new task state: retrieve again only if the state materially changes
-```
-
-A database with 100,000 historical runs does not justify loading thousands of records into model context.
-
-## Bias controls
+## Bias and failure modes
 
 ### Anchoring
 
-Risk: the model sees an old solution first and mechanically adopts it.
-
-Control: for non-trivial decisions, form a short tentative current-model plan before retrieval.
+Old solutions can anchor a stronger current model. Form a tentative current-model plan before retrieval for meaningful decisions.
 
 ### Confirmation bias
 
-Risk: the agent only notices experiences that support its initial plan.
+Agents may selectively read history that supports their initial plan. For high-impact choices, inspect disconfirming evidence.
 
-Control: explicitly inspect conflicting or disconfirming evidence when the decision is high-impact.
+### Experience-following and negative transfer
 
-### Experience-following
-
-Risk: task similarity causes trajectory imitation even when the environment changed.
-
-Control: require applicability checks for task state, stack, version, and project constraints.
-
-### Negative transfer
-
-Risk: a lesson from one domain/project harms another.
-
-Control: narrow retrieval by task type and environment; permit `no useful memory` as a normal outcome.
+Similarity does not prove applicability. Require task-state, stack, version, and project-constraint checks.
 
 ### Staleness
 
-Risk: yesterday's workaround becomes today's anti-pattern.
-
-Control: retain framework/model/harness context and later add freshness/revalidation policy.
+Frameworks, harnesses, and foundation models evolve. Old knowledge should lose freshness and be revalidated.
 
 ### Survivorship bias
 
-Risk: the system remembers only successful approaches.
-
-Control: preserve established failure modes and why they failed.
+Failures and near-misses can be more informative than successes. Preserve established failure reasons.
 
 ### Recency bias
 
-Risk: the newest experience is treated as the best.
-
-Control: consider evidence quality and transfer record, not only timestamp.
+Latest is not automatically best; evidence quality and transfer history matter.
 
 ### Correlated evidence
 
-Risk: multiple summaries derived from one run look like independent confirmations.
-
-Control: conservative deduplication in v0.1; explicit lineage later.
+Several summaries derived from one run are not independent validation. `experience_evidence` preserves root run relationships.
 
 ### Authority bias
 
-Risk: a status such as `active` causes agents to stop reasoning.
+`active` and `skill` never mean mandatory.
 
-Control: no experience status overrides current project constraints or deterministic evidence.
+### Project dominance
 
-### Context interference
+A project with many runs should not make its local convention a global truth. Cross-project evidence is a promotion signal.
 
-Risk: too many retrieved memories make the current model worse.
+### Retrieval and context interference
 
-Control: retrieve narrowly and cap results.
+Too much relevant-looking context can still reduce performance. Keep retrieval bounded.
 
-### Memory poisoning
+### Router path dependence
 
-Risk: malicious or low-trust repository/web instructions become persistent global knowledge.
+A historically selected model can monopolize tasks and prevent a new model proving itself. Retain a small exploration or shadow-evaluation budget.
 
-Control: never promote untrusted instructions merely because an agent consumed them. Store provenance and require independent verification before stronger trust.
+### Reviewer herding and self-preference
 
-### Model/router path dependence
+Do not treat several agents reading the same plan and evidence as independent reviewers. When warranted, use independently scoped review inputs.
 
-Risk: a historically successful model keeps getting selected, so new/updated models never receive enough tasks to prove they are better.
+### Metric gaming
 
-Control: later model-routing phases should retain a small exploration budget and shadow evaluation for new configurations.
+Agents may optimize weak visible checks instead of the actual engineering goal. Prefer diverse deterministic gates, mutation testing where justified, and product-level evidence for important behavior.
 
-## Challenge policy
+### Untrusted-source contamination
 
-Do not challenge every task with another model. Challenge is an escalation mechanism.
+Repository or web content is untrusted evidence. Do not turn instructions discovered in project content into global engineering guidance without independent verification and provenance.
 
-A future challenge score may consider:
+## Challenge ROI
 
-```text
-risk
-× uncertainty
-× historical conflict
-× staleness
-× cost of failure
-```
+Challenge should be measured, not ritualized. Track challenge level, whether it changed or corrected the result, and the added cost or latency.
 
-Prefer cheap deterministic gates before paid model challengers.
+If a task family rarely benefits from challenge, reduce challenge frequency. If high-risk migrations are frequently corrected by challenge, preserve it.
 
-## Regression corpus
+## Memory Lift
 
-Important historical failures should eventually leave active memory and become eval cases.
-
-Example:
+Long-term success metric:
 
 ```text
-historical failure
-  "destructive enum migration lost compatibility"
-        ↓
-regression case
-        ↓
-run against new model/harness/skill versions
+Memory Lift = performance(memory-assisted) - performance(model-only baseline)
 ```
 
-This lets the system remember severe mistakes without forcing the full historical story into every future context.
-
-## Forgetting policy
-
-The long-term store may grow; the **active knowledge set should remain bounded**.
-
-Future lifecycle jobs should downgrade low-value items using deterministic signals such as:
-
-- last used
-- reuse count
-- evidence count
-- recent contradiction rate
-- version mismatch
-- superseded status
-- novelty
-- cross-project usefulness
-
-Prefer `archive` before hard deletion.
+A negative Memory Lift means the knowledge or retrieval policy is technical debt and should be revalidated, narrowed, or disabled.
