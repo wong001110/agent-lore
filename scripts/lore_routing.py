@@ -4,10 +4,18 @@ from lore_common import *  # noqa: F401,F403
 from lore_memory import *  # noqa: F401,F403
 from lore_registry import *  # noqa: F401,F403
 
+
 def topology_history(conn: sqlite3.Connection, args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     clauses = ["topology IS NOT NULL"]
     params: list[Any] = []
-    for column, value in (("task_type", args.type), ("language", args.language), ("framework", args.framework)):
+    for column, value in (
+        ("source_project", getattr(args, "project", None)),
+        ("module", getattr(args, "module", None)),
+        ("task_type", args.type),
+        ("task_subtype", getattr(args, "subtype", None)),
+        ("language", args.language),
+        ("framework", args.framework),
+    ):
         if value:
             clauses.append(f"COALESCE({column}, '') = ?")
             params.append(value)
@@ -15,9 +23,12 @@ def topology_history(conn: sqlite3.Connection, args: argparse.Namespace) -> dict
         f"""
         SELECT topology,
                COUNT(*) AS runs,
-               AVG(CASE WHEN outcome='success' THEN 1.0 ELSE 0.0 END) AS success_rate,
+               AVG(CASE WHEN outcome='success' THEN 1.0 ELSE 0.0 END) AS execution_success_rate,
+               SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
+               SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
                AVG(COALESCE(quality_score, CASE WHEN outcome='success' THEN 1.0 ELSE 0.0 END)) AS avg_quality,
                AVG(cost_usd) AS avg_cost,
+               AVG(COALESCE(wall_time_ms, latency_ms)) AS avg_wall_time,
                AVG(retry_count) AS avg_retries,
                AVG(COALESCE(merge_conflicts, 0)) AS avg_conflicts,
                AVG(COALESCE(agent_count, 1)) AS avg_agents
@@ -29,11 +40,25 @@ def topology_history(conn: sqlite3.Connection, args: argparse.Namespace) -> dict
     ).fetchall()
     result: dict[str, dict[str, Any]] = {}
     for row in rows:
+        observed = int(row["acceptance_observed"] or 0)
+        accepted = int(row["accepted"] or 0)
+        acceptance_rate = accepted / observed if observed else None
+        execution_rate = float(row["execution_success_rate"] or 0.0)
+        acceptance_confidence = min(1.0, observed / 8.0)
+        effective_success = (
+            acceptance_confidence * acceptance_rate + (1.0 - acceptance_confidence) * execution_rate
+            if acceptance_rate is not None
+            else execution_rate
+        )
         result[row["topology"]] = {
             "runs": int(row["runs"]),
-            "success_rate": float(row["success_rate"] or 0.0),
+            "execution_success_rate": execution_rate,
+            "acceptance_observed": observed,
+            "acceptance_rate": acceptance_rate,
+            "effective_success": effective_success,
             "avg_quality": float(row["avg_quality"] or 0.0),
             "avg_cost": float(row["avg_cost"]) if row["avg_cost"] is not None else None,
+            "avg_wall_time": float(row["avg_wall_time"]) if row["avg_wall_time"] is not None else None,
             "avg_retries": float(row["avg_retries"] or 0.0),
             "avg_conflicts": float(row["avg_conflicts"] or 0.0),
             "avg_agents": float(row["avg_agents"] or 1.0),
@@ -81,19 +106,22 @@ def choose_topology(conn: sqlite3.Connection, args: argparse.Namespace, current_
 
     ranked_history: list[tuple[float, str, dict[str, Any]]] = []
     observed_costs = [v["avg_cost"] for k, v in history.items() if k in allowed and v["avg_cost"] is not None]
+    observed_times = [v["avg_wall_time"] for k, v in history.items() if k in allowed and v["avg_wall_time"] is not None]
     for topology, stats in history.items():
         if topology not in allowed or stats["runs"] < 3:
             continue
         cost_score = minmax_inverse(stats["avg_cost"], observed_costs)
+        time_score = minmax_inverse(stats["avg_wall_time"], observed_times)
         retry_score = 1.0 / (1.0 + stats["avg_retries"])
         conflict_score = 1.0 / (1.0 + stats["avg_conflicts"])
         agent_efficiency = 1.0 / max(1.0, stats["avg_agents"] / 2.0)
         utility = (
-            0.48 * stats["success_rate"]
-            + 0.22 * stats["avg_quality"]
+            0.42 * stats["effective_success"]
+            + 0.20 * stats["avg_quality"]
             + 0.10 * cost_score
-            + 0.08 * retry_score
-            + 0.07 * conflict_score
+            + 0.10 * time_score
+            + 0.07 * retry_score
+            + 0.06 * conflict_score
             + 0.05 * agent_efficiency
         )
         ranked_history.append((utility, topology, stats))
@@ -101,9 +129,10 @@ def choose_topology(conn: sqlite3.Connection, args: argparse.Namespace, current_
 
     if ranked_history:
         utility, learned, stats = ranked_history[0]
-        learned_conf = min(0.95, 0.45 + stats["runs"] / 20.0)
+        accepted_samples = stats["acceptance_observed"]
+        learned_conf = min(0.95, 0.40 + stats["runs"] / 25.0 + accepted_samples / 30.0)
         if learned != baseline and utility >= 0.70 and learned_conf >= 0.60:
-            reasons.append(f"historical topology outcomes favor {learned} over heuristic baseline")
+            reasons.append(f"historical accepted outcomes favor {learned} over heuristic baseline")
             return {
                 "topology": learned,
                 "confidence": round(learned_conf, 4),
@@ -206,7 +235,7 @@ def cmd_recommend(args: argparse.Namespace) -> int:
         if selected:
             if selected["historical_runs"]:
                 reasons.append(
-                    f"selected {selected['name']} using task-conditioned observed outcomes plus bootstrap priors"
+                    f"selected {selected['name']} using task-conditioned execution, acceptance, cost, and timing outcomes"
                 )
             else:
                 reasons.append(f"selected {selected['name']} from cold-start quality/cost/priority priors")
@@ -222,19 +251,23 @@ def cmd_recommend(args: argparse.Namespace) -> int:
         conn.execute(
             """
             INSERT INTO routing_decisions(
-                id, created_at, mode, task_type, task_summary, language, framework, framework_version,
-                agent_role, complexity, risk, parallelizable, dependency_level, cross_domain,
-                estimated_subtasks, uncertainty, memory_conflict, stale_memory, deterministic_evidence,
-                cost_of_failure, recommended_topology, recommended_config_id, recommended_model,
-                recommended_harness, model_score, model_confidence, topology_confidence,
-                challenge_level, challenge_score, reasons_json, applied
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, created_at, mode, source_project, module, task_type, task_subtype, task_summary,
+                language, framework, framework_version, agent_role, complexity, risk, parallelizable,
+                dependency_level, cross_domain, estimated_subtasks, uncertainty, memory_conflict,
+                stale_memory, deterministic_evidence, cost_of_failure, recommended_topology,
+                recommended_config_id, recommended_model, recommended_harness, model_score,
+                model_confidence, topology_confidence, challenge_level, challenge_score,
+                reasons_json, applied
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 decision_id,
                 utc_now(),
                 mode,
+                args.project,
+                args.module,
                 args.type,
+                args.subtype,
                 args.task,
                 args.language,
                 args.framework,
@@ -279,7 +312,10 @@ def cmd_recommend(args: argparse.Namespace) -> int:
             "behavior": behavior,
             "task": {
                 "summary": args.task,
+                "project": args.project,
+                "module": args.module,
                 "type": args.type,
+                "subtype": args.subtype,
                 "language": args.language,
                 "framework": args.framework,
                 "framework_version": args.framework_version,
@@ -290,7 +326,7 @@ def cmd_recommend(args: argparse.Namespace) -> int:
             "knowledge": {
                 "count": len(knowledge),
                 "items": knowledge,
-                "advisory": "Do not let retrieved knowledge override current constraints or deterministic evidence.",
+                "advisory": "Do not let retrieved knowledge override current constraints, deterministic evidence, or newer acceptance feedback.",
             },
             "topology": {
                 "recommended": topology["topology"],
