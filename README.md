@@ -1,10 +1,10 @@
 # Agent Lore
 
-**Local-first continual learning and adaptive routing for coding agents.**
+**Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents.**
 
-Agent Lore turns verified coding-agent outcomes into reusable engineering evidence across projects, models, and agent roles. It can also learn which agent configuration is cost-effective for a task and recommend how multi-agent work should be organized.
+Agent Lore turns coding-agent outcomes into reusable engineering evidence across projects, modules, models, and agent roles. It also tracks whether changes were technically verified and actually accepted, preserves rework lineage, compares model performance by real task context, and recommends model/topology/challenge policies.
 
-> Status: **Integrated Alpha / v0.4.0-alpha (Phase 1–4)**. Local learning, knowledge lifecycle, capability intelligence, and adaptive routing are implemented. Cross-device synchronization/service mode remains deferred.
+> Status: **Integrated Alpha / v0.5.0-alpha (Phase 1–4 + acceptance/observability)**. Cross-device synchronization/service mode remains deferred to Phase 5.
 
 ## What is implemented
 
@@ -18,9 +18,8 @@ Phase 2 — Knowledge lifecycle
   pattern/skill/eval promotion · learned skill materialization
 
 Phase 3 — Capability intelligence
-  task × role × model × harness outcomes
-  quality · success · cost · latency · retries
-  delegation capability registry
+  project × module × task/subtype × role × model × harness
+  execution · verification · acceptance · quality · cost · timing · retries
 
 Phase 4 — Adaptive multi-agent
   observe / assist / adaptive modes
@@ -28,39 +27,34 @@ Phase 4 — Adaptive multi-agent
   single / flat-parallel / lead-worker / sequential topology router
   selective challenge escalation
   routing-decision → outcome feedback loop
+
+Acceptance / observability extension
+  execution ≠ verification ≠ acceptance
+  accept / rework / reject / invalidate feedback
+  parent-run rework lineage + attempt_index
+  first-pass acceptance + rework-aware benchmark
+  Markdown project/module/task reports
 ```
 
-Phase 5 (not implemented) is remote sync/service mode.
-
-## Core principle
+## Core principles
 
 **Past experience is evidence, not truth.**
 
-Agent Lore is designed to avoid becoming a stale rulebook. Current project constraints, dependency versions, current-model reasoning, and deterministic tests remain authoritative inputs. Historical knowledge may be challenged, revalidated, deprecated, archived, or replaced.
+**Agent execution success is not final delivery success.**
 
-## Architecture
+A run may compile and pass tests yet still be rejected because the requirement, product behavior, UX, maintainability, or integration result is wrong. Agent Lore therefore keeps execution, verification, and acceptance separate.
 
 ```text
-                       Coding agent / harness
-                Codex · DeepSeek Harness · others
-                              │
-                              ▼
-                       Agent Lore Skill
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
- Engineering knowledge   Capability registry    Adaptive router
- experiences/patterns    model/role/harness     model/topology/challenge
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              ▼
-                      ~/.agent-lore/
-                      agent-lore.db
-                      knowledge/skills/
-                      archive/ exports/
+execution outcome
+        ↓
+verification status
+        ↓
+acceptance status
+        ↓
+learning outcome
 ```
 
-The GitHub repository contains the learning engine and skill instructions. Personal learned data stays outside the repository.
+Automatic knowledge promotion requires accepted and verified evidence.
 
 ## Repository layout
 
@@ -68,18 +62,21 @@ The GitHub repository contains the learning engine and skill instructions. Perso
 agent-lore/
 ├─ SKILL.md
 ├─ scripts/
-│  ├─ agent_lore.py          # CLI entry
-│  ├─ lore_common.py         # schema/utilities
-│  ├─ lore_memory.py         # retrieve/record
-│  ├─ lore_lifecycle.py      # consolidate/promote/materialize
-│  ├─ lore_registry.py       # agent/model capability registry
-│  ├─ lore_routing.py        # topology/model/challenge routing
-│  └─ lore_ops.py            # stats/export/import/doctor
+│  ├─ agent_lore.py
+│  ├─ lore_common.py
+│  ├─ lore_memory.py
+│  ├─ lore_feedback.py
+│  ├─ lore_lifecycle.py
+│  ├─ lore_registry.py
+│  ├─ lore_routing.py
+│  ├─ lore_ops.py
+│  └─ lore_report.py
 ├─ references/
 │  ├─ ARCHITECTURE.md
 │  ├─ DATA_MODEL.md
 │  ├─ LIFECYCLE.md
-│  └─ ROUTING.md
+│  ├─ ROUTING.md
+│  └─ ACCEPTANCE.md
 ├─ tests/
 │  └─ test_smoke.py
 ├─ .github/workflows/test.yml
@@ -87,13 +84,15 @@ agent-lore/
 └─ README.md
 ```
 
-Runtime data:
+Runtime data stays outside the repository:
 
 ```text
 ~/.agent-lore/
 ├─ agent-lore.db
 ├─ knowledge/
 │  └─ skills/
+├─ reports/
+│  └─ latest.md
 ├─ traces/
 ├─ archive/
 └─ exports/
@@ -103,7 +102,7 @@ Override with `AGENT_LORE_HOME`.
 
 ## Install as an Agent Skill
 
-Agent Lore uses the open Agent Skills `SKILL.md` format. Place the repository as an `agent-lore` skill directory in a project/user/custom skill location supported by your coding agent.
+Agent Lore uses the open Agent Skills `SKILL.md` format. Put this repository in a project/user/custom skill directory supported by your coding agent.
 
 For DeepSeek Harness, one project-level location is:
 
@@ -119,7 +118,7 @@ python scripts/agent_lore.py init
 
 The CLI uses only the Python standard library (Python 3.10+).
 
-## Start safely: observe → assist → adaptive
+## Start safely
 
 Fresh installations default to `observe`:
 
@@ -127,21 +126,14 @@ Fresh installations default to `observe`:
 python scripts/agent_lore.py policy show
 ```
 
-After collecting outcomes:
+Then move to `assist` and `adaptive` only after real outcomes exist:
 
 ```bash
 python scripts/agent_lore.py policy set --mode assist
-```
-
-Only enable autonomous application when you trust the observed results and host-harness integration:
-
-```bash
 python scripts/agent_lore.py policy set --mode adaptive
 ```
 
-The skill itself does not magically spawn arbitrary external models. It recommends a configuration/topology; the host coding harness must support executing it.
-
-## Register agent/model configurations
+## Register model/agent configurations
 
 Cold-start tiers are priors, not benchmark claims.
 
@@ -166,18 +158,15 @@ python scripts/agent_lore.py config add \
   --max-depth 2
 ```
 
-List configurations:
-
-```bash
-python scripts/agent_lore.py config list
-```
-
 ## Integrated recommendation
 
 ```bash
 python scripts/agent_lore.py recommend \
   --task "implement three independent validation checks" \
+  --project my-project \
+  --module authentication \
   --type test-generation \
+  --subtype boundary-validation \
   --language typescript \
   --framework nextjs \
   --agent-role test-worker \
@@ -189,34 +178,106 @@ python scripts/agent_lore.py recommend \
   --uncertainty 0.25
 ```
 
-The output includes:
+The result includes relevant knowledge, topology, selected config, alternatives, exploration candidate, challenge level, and a `decision_id`.
 
-- relevant knowledge (small retrieval budget)
-- recommended topology
-- recommended registered agent/model configuration
-- alternative configurations
-- optional exploration/shadow candidate
-- challenge level
-- a `decision_id`
-
-Feed the real outcome back:
+## Record an execution attempt
 
 ```bash
 python scripts/agent_lore.py record \
-  --task "implement three independent validation checks" \
-  --type test-generation \
+  --task "simplify refresh token controls" \
+  --project my-project \
+  --module authentication \
+  --type implementation \
+  --subtype product-flow \
+  --operation implement \
   --outcome success \
   --model my-fast-model \
   --harness my-harness \
-  --agent-role test-worker \
-  --topology flat-parallel \
-  --agent-count 3 \
-  --quality-score 0.93 \
-  --cost-usd 0.05 \
-  --route-decision-id <decision-id>
+  --agent-role implementation-worker \
+  --verification "unit + e2e passed" \
+  --verification-status passed \
+  --wall-time-ms 42000 \
+  --compute-time-ms 30000 \
+  --review-time-ms 5000
 ```
 
-That closes the routing learning loop.
+For user-visible/product work, acceptance remains `pending` until relevant human/reviewer feedback exists.
+
+For a completely machine-verifiable task, record `--acceptance-status not-required` only when human/product judgment is genuinely unnecessary.
+
+## Accept / rework / reject
+
+Accept:
+
+```bash
+python scripts/agent_lore.py feedback <run-id> \
+  --verdict accept \
+  --reason "meets expected behavior"
+```
+
+Rework:
+
+```bash
+python scripts/agent_lore.py feedback <run-id> \
+  --verdict rework \
+  --reason "technically correct but interaction is too complicated"
+```
+
+Record the corrected attempt as the same logical task:
+
+```bash
+python scripts/agent_lore.py record \
+  --task "simplify refresh token controls" \
+  --parent-run-id <previous-run-id> \
+  --outcome success \
+  --verification-status passed \
+  --acceptance-status accepted \
+  --acceptance-source human
+```
+
+Agent Lore preserves the task group and increments the attempt index. This makes first-pass acceptance, rework count, accumulated work-to-final-result, and cost-to-final-result measurable.
+
+Negative feedback on a run linked to learned knowledge flags that knowledge as `needs_revalidation` rather than silently trusting it.
+
+## Human-readable report
+
+Generate a Markdown report:
+
+```bash
+python scripts/agent_lore.py report
+```
+
+Default:
+
+```text
+~/.agent-lore/reports/latest.md
+```
+
+Drill down:
+
+```bash
+python scripts/agent_lore.py report \
+  --project my-project \
+  --module authentication \
+  --type debugging
+```
+
+The report contains:
+
+- project/module/task/subtype model benchmark
+- execution success vs acceptance
+- first-pass acceptance and rework count
+- quality and cost
+- wall/compute/verification/review/coordination timing
+- rework/task-group history
+- accumulated recorded work time to final accepted result
+- knowledge health and revalidation backlog
+
+JSON stats remain available:
+
+```bash
+python scripts/agent_lore.py stats --project my-project --module authentication
+```
 
 ## Knowledge lifecycle
 
@@ -225,28 +286,26 @@ Record a reusable lesson only when evidence exists:
 ```bash
 python scripts/agent_lore.py record \
   --task "safe enum migration" \
+  --project project-a \
+  --module data-model \
   --type migration \
   --outcome success \
-  --language typescript \
-  --framework prisma \
   --verification "migration test + e2e passed" \
+  --verification-status passed \
+  --acceptance-status accepted \
+  --acceptance-source reviewer \
   --lesson "Prefer a transitional migration when existing rows depend on legacy values" \
   --solution "add transitional value, migrate data, then remove legacy value"
 ```
 
-Preview consolidation:
+Lifecycle maintenance:
 
 ```bash
 python scripts/agent_lore.py consolidate
-```
-
-Apply conservative lifecycle changes:
-
-```bash
 python scripts/agent_lore.py consolidate --apply
 ```
 
-Promote deliberately:
+Promotion:
 
 ```bash
 python scripts/agent_lore.py promote <knowledge-id> --kind pattern
@@ -254,43 +313,50 @@ python scripts/agent_lore.py promote <knowledge-id> --kind skill --name safe-enu
 python scripts/agent_lore.py materialize-skills
 ```
 
-Old knowledge can be retained without normal retrieval:
+Execution success by itself does not qualify for automatic promotion.
 
-```bash
-python scripts/agent_lore.py deprecate <id> --reason "framework now has a safer native API"
-python scripts/agent_lore.py archive <id> --reason "stale low-utility historical case"
-```
+## Model and topology benchmark semantics
 
-## Challenge is selective
-
-Agent Lore does not recommend a second model for every task. Its challenge score considers risk, uncertainty, failure cost, historical conflict/staleness, and deterministic evidence.
+Agent Lore does not claim that one model is globally better. It asks:
 
 ```text
-low value       → none
-small uncertainty → self-check
-meaningful risk → cheap challenger
-critical conflict/uncertainty → strong challenger
+In this project/module/task context,
+which model/harness/role produced accepted results
+with the best quality / time / cost / rework profile?
 ```
 
-Deterministic gates should be preferred when they can answer the question.
+This matters because a fast first generation can still be slower overall if it needs repeated correction.
+
+Prefer metrics such as:
+
+- acceptance rate
+- first-pass acceptance rate
+- reworks
+- wall time
+- accumulated work to accepted result
+- cost to accepted result
+- quality
+- deterministic verification
+
+rather than raw generation latency alone.
 
 ## Multi-agent guardrails
 
-Default policy keeps hierarchy shallow:
+Default policy:
 
 ```text
 max_depth = 2
 max_agents = 6
 ```
 
-The router distinguishes:
+Supported topology recommendations:
 
 - `single`
 - `flat-parallel`
 - `lead-worker`
 - `sequential`
 
-It should not create parallel workers for strongly dependent tasks or overlapping mutable write scopes merely to increase concurrency.
+Wall time and accumulated compute/coordination time should be recorded separately when possible; multi-agent can reduce user waiting time while increasing total compute/cost.
 
 ## Portability
 
@@ -299,23 +365,23 @@ python scripts/agent_lore.py export --output agent-lore-backup.zip
 python scripts/agent_lore.py import agent-lore-backup.zip
 ```
 
-SQLite is backed up consistently before export. Import creates a safety backup of an existing local database and upgrades older Agent Lore schemas when opened.
+SQLite is backed up consistently before export. Import creates a safety backup and upgrades older schemas when opened.
 
-## What remains for Phase 5
+## Phase 5 remains deferred
 
-Not part of the current alpha:
+Not implemented yet:
 
 - remote source of truth
 - automatic multi-device synchronization
-- local cache/event replication
+- event replication/local cache
 - long-running MCP/daemon service
 - object storage for large traces
 
-Until then, manual portable ZIP transfer is the supported device migration path.
+Until then, portable ZIP transfer is the supported device migration path.
 
 ## Success criteria
 
-The goal is not a large memory database. Measure whether the system actually helps:
+The goal is not a large memory database. Measure whether Agent Lore improves real delivery:
 
 ```text
 Memory Lift = performance(with Agent Lore) - model-only baseline
@@ -323,14 +389,14 @@ Memory Lift = performance(with Agent Lore) - model-only baseline
 
 Also track:
 
-- retry reduction
-- success/quality lift
-- cost and latency
+- acceptance / first-pass acceptance lift
+- retry and rework reduction
+- time/cost to accepted result
 - challenge ROI
 - topology overhead/conflicts
 - per-task model configuration utility
 
-If memory or routing produces negative lift, it should be revalidated or disabled rather than trusted because it is historical.
+If memory or routing produces negative lift, revalidate or disable it rather than trusting history because it exists.
 
 ## License
 
