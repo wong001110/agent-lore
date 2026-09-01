@@ -3,13 +3,19 @@
 
 from lore_common import *  # noqa: F401,F403
 from lore_memory import *  # noqa: F401,F403
+from lore_feedback import *  # noqa: F401,F403
 from lore_lifecycle import *  # noqa: F401,F403
 from lore_registry import *  # noqa: F401,F403
 from lore_routing import *  # noqa: F401,F403
 from lore_ops import *  # noqa: F401,F403
+from lore_report import *  # noqa: F401,F403
+
 
 def add_context_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--project", help="Project label; defaults to current Git repository for record")
+    parser.add_argument("--module", help="Project module/subsystem, e.g. auth, billing, frontend")
     parser.add_argument("--type", help="Task family, e.g. migration, debugging, test-generation")
+    parser.add_argument("--subtype", help="Narrow task subtype, e.g. race-condition, api-endpoint")
     parser.add_argument("--language")
     parser.add_argument("--framework")
     parser.add_argument("--framework-version")
@@ -33,7 +39,7 @@ def add_routing_args(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-lore",
-        description="Local-first continual learning and adaptive routing for coding agents.",
+        description="Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents.",
     )
     parser.add_argument("--version", action="version", version=APP_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -47,23 +53,41 @@ def build_parser() -> argparse.ArgumentParser:
     p_retrieve.add_argument("--limit", type=int, default=5)
     p_retrieve.set_defaults(func=cmd_retrieve)
 
-    p_record = sub.add_parser("record", help="Record a verified run and optional reusable lesson.")
+    p_record = sub.add_parser("record", help="Record one execution attempt plus verification/acceptance state.")
     p_record.add_argument("--task", required=True)
     add_context_args(p_record)
-    p_record.add_argument("--outcome", required=True, choices=["success", "failure", "partial"])
-    p_record.add_argument("--project")
+    p_record.add_argument("--task-scope", help="Area such as backend, frontend, infra, mobile")
+    p_record.add_argument("--operation", help="Operation such as implement, fix, refactor, test, review")
+    p_record.add_argument("--outcome", required=True, choices=["success", "failure", "partial"], help="Execution outcome, not final user acceptance")
     p_record.add_argument("--agent-role")
     p_record.add_argument("--model")
     p_record.add_argument("--harness")
     p_record.add_argument("--verification")
+    p_record.add_argument("--verification-status", choices=VERIFICATION_STATUSES, default="pending")
+    p_record.add_argument("--acceptance-status", choices=ACCEPTANCE_STATUSES, default="pending")
+    p_record.add_argument("--acceptance-reason")
+    p_record.add_argument("--acceptance-source", choices=FEEDBACK_SOURCES)
+    p_record.add_argument("--parent-run-id", help="Previous attempt when this run is a rework")
+    p_record.add_argument("--task-group-id", help="Optional stable task group id; normally inferred")
     p_record.add_argument("--lesson")
     p_record.add_argument("--failure-reason")
     p_record.add_argument("--solution")
     p_record.add_argument("--confidence", type=float, default=0.5)
     p_record.add_argument("--quality-score", type=float)
     p_record.add_argument("--cost-usd", type=float)
-    p_record.add_argument("--latency-ms", type=int)
+    p_record.add_argument("--latency-ms", type=int, help="Model/inference latency when known")
+    p_record.add_argument("--wall-time-ms", type=int, help="User-visible task-attempt wall time")
+    p_record.add_argument("--compute-time-ms", type=int, help="Accumulated agent/model compute time")
+    p_record.add_argument("--verification-time-ms", type=int)
+    p_record.add_argument("--review-time-ms", type=int)
+    p_record.add_argument("--coordination-time-ms", type=int)
     p_record.add_argument("--retries", type=int, default=0)
+    p_record.add_argument("--files-touched", type=int)
+    p_record.add_argument("--lines-changed", type=int)
+    p_record.add_argument("--modules-touched", type=int)
+    p_record.add_argument("--has-db-change", action="store_true")
+    p_record.add_argument("--has-api-contract-change", action="store_true")
+    p_record.add_argument("--test-count", type=int)
     p_record.add_argument("--notes")
     p_record.add_argument("--tags", help="Comma-separated tags")
     p_record.add_argument("--trust", choices=["local-verified", "independent-verified", "untrusted", "unknown"], default="local-verified")
@@ -79,18 +103,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_record.add_argument("--route-decision-id")
     p_record.set_defaults(func=cmd_record)
 
+    p_feedback = sub.add_parser("feedback", help="Record human/reviewer acceptance, rework, rejection, or invalidation for a run.")
+    p_feedback.add_argument("run_id")
+    p_feedback.add_argument("--verdict", required=True, choices=FEEDBACK_VERDICTS)
+    p_feedback.add_argument("--reason")
+    p_feedback.add_argument("--source", choices=FEEDBACK_SOURCES, default="human")
+    p_feedback.add_argument("--related-run-id", help="Optional corrected/replacement run")
+    p_feedback.set_defaults(func=cmd_feedback)
+
     p_consolidate = sub.add_parser("consolidate", help="Score lifecycle utility and conservatively promote/archive knowledge.")
     p_consolidate.add_argument("--apply", action="store_true", help="Apply safe lifecycle changes; otherwise preview.")
     p_consolidate.set_defaults(func=cmd_consolidate)
 
-    p_knowledge = sub.add_parser("knowledge", help="List learned knowledge.")
+    p_knowledge = sub.add_parser("knowledge", help="List learned knowledge and acceptance metrics.")
     p_knowledge.add_argument("--status", choices=["candidate", "active", "deprecated", "archived"])
     p_knowledge.add_argument("--kind", choices=["experience", "pattern", "skill", "eval"])
     p_knowledge.add_argument("--type")
     p_knowledge.add_argument("--limit", type=int, default=100)
     p_knowledge.set_defaults(func=cmd_knowledge)
 
-    p_promote = sub.add_parser("promote", help="Explicitly promote knowledge into a pattern, skill, or eval case.")
+    p_promote = sub.add_parser("promote", help="Explicitly promote accepted/verified knowledge into a pattern, skill, or eval case.")
     p_promote.add_argument("id")
     p_promote.add_argument("--kind", required=True, choices=["pattern", "skill", "eval"])
     p_promote.add_argument("--name")
@@ -108,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_archive.add_argument("--reason", required=True)
     p_archive.set_defaults(func=cmd_archive)
 
-    p_materialize = sub.add_parser("materialize-skills", help="Write active learned skills as Agent Skills directories.")
+    p_materialize = sub.add_parser("materialize-skills", help="Write accepted active learned skills as Agent Skills directories.")
     p_materialize.set_defaults(func=cmd_materialize)
 
     p_config = sub.add_parser("config", help="Manage task-routable model/agent configurations.")
@@ -155,12 +187,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_recommend.add_argument("--limit", type=int, default=3)
     p_recommend.set_defaults(func=cmd_recommend)
 
-    p_stats = sub.add_parser("stats", help="Summarize observed model/agent/topology outcomes and routing decisions.")
+    p_stats = sub.add_parser("stats", help="Summarize project/module/task/model outcomes including acceptance.")
     add_context_args(p_stats)
     p_stats.add_argument("--model")
     p_stats.add_argument("--agent-role")
     p_stats.add_argument("--topology", choices=TOPOLOGIES)
     p_stats.set_defaults(func=cmd_stats)
+
+    p_report = sub.add_parser("report", help="Generate a human-readable Markdown benchmark/acceptance report.")
+    p_report.add_argument("--project")
+    p_report.add_argument("--module")
+    p_report.add_argument("--type")
+    p_report.add_argument("--subtype")
+    p_report.add_argument("--output")
+    p_report.set_defaults(func=cmd_report)
 
     p_export = sub.add_parser("export", help="Create a portable consistent snapshot.")
     p_export.add_argument("--output")
@@ -170,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("bundle")
     p_import.set_defaults(func=cmd_import)
 
-    p_doctor = sub.add_parser("doctor", help="Inspect local store, knowledge, config, and routing health.")
+    p_doctor = sub.add_parser("doctor", help="Inspect local store, acceptance backlog, knowledge, config, and routing health.")
     p_doctor.set_defaults(func=cmd_doctor)
     return parser
 
@@ -181,7 +221,12 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             value = getattr(args, name)
             if value is not None and not 0.0 <= value <= 1.0:
                 parser.error(f"--{name.replace('_', '-')} must be between 0 and 1")
-    for name in ("retries", "latency_ms", "agent_count", "merge_conflicts", "estimated_subtasks", "max_depth", "max_agents", "active_memory_limit"):
+    for name in (
+        "retries", "latency_ms", "wall_time_ms", "compute_time_ms", "verification_time_ms",
+        "review_time_ms", "coordination_time_ms", "files_touched", "lines_changed", "modules_touched",
+        "test_count", "agent_count", "merge_conflicts", "estimated_subtasks", "max_depth", "max_agents",
+        "active_memory_limit",
+    ):
         if hasattr(args, name):
             value = getattr(args, name)
             if value is not None and value < 0:
