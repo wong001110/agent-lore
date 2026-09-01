@@ -2,6 +2,7 @@
 
 from lore_common import *  # noqa: F401,F403
 
+
 def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_reuse: bool) -> list[dict[str, Any]]:
     limit = max(1, min(getattr(args, "limit", 5), 20))
     rows = conn.execute(
@@ -46,6 +47,8 @@ def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_re
             warnings.append("candidate evidence has not been strongly promoted")
         if row["trust"] not in ("local-verified", "independent-verified"):
             warnings.append("low-trust provenance")
+        if int(row["needs_revalidation"] or 0):
+            warnings.append("linked feedback indicates this knowledge needs revalidation")
 
         result.append(
             {
@@ -55,6 +58,8 @@ def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_re
                 "score": round(score, 3),
                 "status": row["status"],
                 "task_type": row["task_type"],
+                "task_subtype": row["task_subtype"],
+                "module": row["module"],
                 "source_project": row["source_project"],
                 "language": row["language"],
                 "framework": row["framework"],
@@ -67,6 +72,7 @@ def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_re
                 "evidence_count": row["evidence_count"],
                 "reuse_count": row["reuse_count"] + (1 if mark_reuse else 0),
                 "trust": row["trust"],
+                "needs_revalidation": bool(row["needs_revalidation"]),
                 "match_reasons": reasons,
                 "warnings": warnings,
             }
@@ -81,7 +87,10 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
         {
             "query": {
                 "task": args.task,
+                "project": getattr(args, "project", None),
+                "module": getattr(args, "module", None),
                 "type": args.type,
+                "subtype": getattr(args, "subtype", None),
                 "language": args.language,
                 "framework": args.framework,
                 "framework_version": args.framework_version,
@@ -102,6 +111,16 @@ def outcome_counts(outcome: str) -> tuple[int, int]:
     return 0, 0
 
 
+def evidence_relation(args: argparse.Namespace) -> str:
+    if args.acceptance_status in ("accepted", "not-required"):
+        if args.outcome == "success" and args.verification_status in ("passed", "not-required"):
+            return "supports"
+        return "related"
+    if args.acceptance_status in ("rework", "rejected", "invalidated"):
+        return "contradicts"
+    return "related"
+
+
 def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: str, project: str, tags: list[str]) -> str | None:
     if not args.lesson:
         return None
@@ -112,15 +131,18 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
         SELECT * FROM experiences
         WHERE lesson_key = ?
           AND COALESCE(task_type, '') = COALESCE(?, '')
+          AND COALESCE(task_subtype, '') = COALESCE(?, '')
+          AND COALESCE(module, '') = COALESCE(?, '')
           AND COALESCE(language, '') = COALESCE(?, '')
           AND COALESCE(framework, '') = COALESCE(?, '')
           AND status IN ('candidate', 'active')
         ORDER BY updated_at DESC
         LIMIT 1
         """,
-        (lesson_key, args.type, args.language, args.framework),
+        (lesson_key, args.type, args.subtype, args.module, args.language, args.framework),
     ).fetchone()
     successes, failures = outcome_counts(args.outcome)
+    verified_now = args.verification_status in ("passed", "not-required")
 
     if existing:
         experience_id = existing["id"]
@@ -129,6 +151,8 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             UPDATE experiences
             SET updated_at = ?,
                 task_summary = ?,
+                module = COALESCE(?, module),
+                task_subtype = COALESCE(?, task_subtype),
                 framework_version = COALESCE(?, framework_version),
                 failure_reason = COALESCE(?, failure_reason),
                 solution_summary = COALESCE(?, solution_summary),
@@ -136,7 +160,7 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
                 evidence_count = evidence_count + 1,
                 success_count = success_count + ?,
                 failure_count = failure_count + ?,
-                last_verified_at = CASE WHEN ? IS NOT NULL THEN ? ELSE last_verified_at END,
+                last_verified_at = CASE WHEN ? THEN ? ELSE last_verified_at END,
                 trust = CASE WHEN trust = 'untrusted' AND ? = 'local-verified' THEN 'local-verified' ELSE trust END,
                 tags = ?
             WHERE id = ?
@@ -144,13 +168,15 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             (
                 now,
                 args.task,
+                args.module,
+                args.subtype,
                 args.framework_version,
                 args.failure_reason,
                 args.solution,
                 args.confidence,
                 successes,
                 failures,
-                args.verification,
+                1 if verified_now else 0,
                 now,
                 args.trust,
                 json.dumps(tags, ensure_ascii=False),
@@ -164,11 +190,11 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
         """
         INSERT INTO experiences(
             id, created_at, updated_at, status, source_project,
-            task_type, task_summary, language, framework, framework_version,
+            task_type, task_subtype, module, task_summary, language, framework, framework_version,
             lesson, lesson_key, failure_reason, solution_summary,
             confidence, success_count, failure_count, tags,
             kind, trust, last_verified_at
-        ) VALUES (?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'experience', ?, ?)
+        ) VALUES (?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'experience', ?, ?)
         """,
         (
             experience_id,
@@ -176,6 +202,8 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             now,
             project,
             args.type,
+            args.subtype,
+            args.module,
             args.task,
             args.language,
             args.framework,
@@ -189,38 +217,70 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             failures,
             json.dumps(tags, ensure_ascii=False),
             args.trust,
-            now if args.verification else None,
+            now if verified_now else None,
         ),
     )
     return experience_id
 
 
+def resolve_task_lineage(conn: sqlite3.Connection, args: argparse.Namespace) -> tuple[str, int, sqlite3.Row | None]:
+    parent = None
+    if args.parent_run_id:
+        parent = conn.execute("SELECT * FROM runs WHERE id=?", (args.parent_run_id,)).fetchone()
+        if not parent:
+            raise ValueError(f"unknown parent run id: {args.parent_run_id}")
+        return parent["task_group_id"] or parent["id"], int(parent["attempt_index"] or 1) + 1, parent
+    return args.task_group_id or stable_id("task-"), 1, None
+
+
 def cmd_record(args: argparse.Namespace) -> int:
     now = utc_now()
     run_id = stable_id("run-")
-    project = args.project or infer_project_name()
     tags = parse_tags(args.tags)
 
     with connect() as conn:
+        task_group_id, attempt_index, parent = resolve_task_lineage(conn, args)
+        project = args.project or (parent["source_project"] if parent else None) or infer_project_name()
+        if parent:
+            args.module = args.module or parent["module"]
+            args.type = args.type or parent["task_type"]
+            args.subtype = args.subtype or parent["task_subtype"]
+            args.language = args.language or parent["language"]
+            args.framework = args.framework or parent["framework"]
+            args.framework_version = args.framework_version or parent["framework_version"]
+            args.agent_role = args.agent_role or parent["agent_role"]
+
         experience_id = record_experience(conn, args, now, project, tags)
+        accepted_at = now if args.acceptance_status == "accepted" else None
 
         conn.execute(
             """
             INSERT INTO runs(
-                id, created_at, source_project, task_type, task_summary,
+                id, created_at, source_project, module, task_type, task_subtype, task_summary,
+                task_scope, operation, task_group_id, parent_run_id, attempt_index,
                 language, framework, framework_version, agent_role, model, harness,
-                outcome, verification, latency_ms, cost_usd, retry_count,
-                notes, tags, experience_id, quality_score, run_kind, topology,
-                agent_count, merge_conflicts, challenge_level, challenge_useful,
-                route_decision_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                outcome, verification, verification_status, acceptance_status, acceptance_reason,
+                acceptance_source, accepted_at, latency_ms, wall_time_ms, compute_time_ms,
+                verification_time_ms, review_time_ms, coordination_time_ms,
+                cost_usd, retry_count, notes, tags, experience_id, quality_score, run_kind, topology,
+                agent_count, merge_conflicts, challenge_level, challenge_useful, route_decision_id,
+                files_touched, lines_changed, modules_touched, has_db_change,
+                has_api_contract_change, test_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 now,
                 project,
+                args.module,
                 args.type,
+                args.subtype,
                 args.task,
+                args.task_scope,
+                args.operation,
+                task_group_id,
+                args.parent_run_id,
+                attempt_index,
                 args.language,
                 args.framework,
                 args.framework_version,
@@ -229,7 +289,17 @@ def cmd_record(args: argparse.Namespace) -> int:
                 args.harness,
                 args.outcome,
                 args.verification,
+                args.verification_status,
+                args.acceptance_status,
+                args.acceptance_reason,
+                args.acceptance_source,
+                accepted_at,
                 args.latency_ms,
+                args.wall_time_ms,
+                args.compute_time_ms,
+                args.verification_time_ms,
+                args.review_time_ms,
+                args.coordination_time_ms,
                 args.cost_usd,
                 args.retries,
                 args.notes,
@@ -243,15 +313,42 @@ def cmd_record(args: argparse.Namespace) -> int:
                 args.challenge_level,
                 bool_int(args.challenge_useful),
                 args.route_decision_id,
+                args.files_touched,
+                args.lines_changed,
+                args.modules_touched,
+                bool_int(args.has_db_change),
+                bool_int(args.has_api_contract_change),
+                args.test_count,
             ),
         )
 
         if experience_id:
-            relation = "supports" if args.outcome == "success" else "contradicts" if args.outcome == "failure" else "related"
             conn.execute(
                 "INSERT OR IGNORE INTO experience_evidence(experience_id, run_id, relation, created_at) VALUES (?, ?, ?, ?)",
-                (experience_id, run_id, relation, now),
+                (experience_id, run_id, evidence_relation(args), now),
             )
+            if args.acceptance_status in ("rework", "rejected", "invalidated"):
+                conn.execute(
+                    "UPDATE experiences SET needs_revalidation=1, status_reason=?, updated_at=? WHERE id=?",
+                    (f"negative acceptance feedback recorded on {run_id}", now, experience_id),
+                )
+
+        if args.acceptance_status != "pending":
+            verdict = {
+                "accepted": "accept",
+                "rework": "rework",
+                "rejected": "reject",
+                "invalidated": "invalidate",
+                "not-required": "accept",
+            }.get(args.acceptance_status)
+            if verdict:
+                conn.execute(
+                    """
+                    INSERT INTO run_feedback(id, run_id, created_at, verdict, reason, source)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (stable_id("feedback-"), run_id, now, verdict, args.acceptance_reason, args.acceptance_source or "auto"),
+                )
 
         if args.route_decision_id:
             conn.execute(
@@ -264,11 +361,17 @@ def cmd_record(args: argparse.Namespace) -> int:
         {
             "status": "recorded",
             "run_id": run_id,
+            "task_group_id": task_group_id,
+            "attempt_index": attempt_index,
+            "parent_run_id": args.parent_run_id,
             "experience_id": experience_id,
             "project": project,
+            "module": args.module,
             "outcome": args.outcome,
+            "verification_status": args.verification_status,
+            "acceptance_status": args.acceptance_status,
             "note": (
-                "Reusable lesson stored/aggregated as candidate evidence. Run linked for lifecycle and capability learning."
+                "Run and reusable lesson recorded. Knowledge promotion depends on accepted/verified evidence, not execution success alone."
                 if experience_id
                 else "Run stored for capability/routing statistics; no reusable knowledge was created."
             ),
