@@ -229,7 +229,12 @@ def resolve_task_lineage(conn: sqlite3.Connection, args: argparse.Namespace) -> 
         parent = conn.execute("SELECT * FROM runs WHERE id=?", (args.parent_run_id,)).fetchone()
         if not parent:
             raise ValueError(f"unknown parent run id: {args.parent_run_id}")
-        return parent["task_group_id"] or parent["id"], int(parent["attempt_index"] or 1) + 1, parent
+        task_group_id = parent["task_group_id"] or parent["id"]
+        latest = conn.execute(
+            "SELECT COALESCE(MAX(attempt_index), 0) FROM runs WHERE task_group_id=?",
+            (task_group_id,),
+        ).fetchone()[0]
+        return task_group_id, int(latest) + 1, parent
     return args.task_group_id or stable_id("task-"), 1, None
 
 
@@ -239,6 +244,9 @@ def cmd_record(args: argparse.Namespace) -> int:
     tags = parse_tags(args.tags)
 
     with connect() as conn:
+        # Serialize lineage allocation so concurrent reworks cannot receive the
+        # same attempt index within one logical task group.
+        conn.execute("BEGIN IMMEDIATE")
         task_group_id, attempt_index, parent = resolve_task_lineage(conn, args)
         project = args.project or (parent["source_project"] if parent else None) or infer_project_name()
         if parent:

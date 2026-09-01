@@ -1,9 +1,11 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -257,9 +259,149 @@ class AgentLoreIntegratedAlphaTest(unittest.TestCase):
             self.assertGreaterEqual(doctor["rework_runs"], 1)
             self.assertEqual(doctor["skills"], 1)
 
-    def test_upgrades_v01_database_in_place(self) -> None:
-        import sqlite3
+    def test_first_pass_metrics_use_decided_initial_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "metrics-home"
+            self.run_cli(home, "init")
 
+            first = self.run_cli(
+                home,
+                "record",
+                "--task", "task requiring rework",
+                "--project", "metrics-project",
+                "--type", "implementation",
+                "--outcome", "success",
+                "--model", "same-model",
+                "--verification-status", "passed",
+            )
+            self.run_cli(home, "feedback", first["run_id"], "--verdict", "rework")
+            corrected = self.run_cli(
+                home,
+                "record",
+                "--task", "task requiring rework",
+                "--parent-run-id", first["run_id"],
+                "--outcome", "success",
+                "--model", "same-model",
+                "--verification-status", "passed",
+                "--acceptance-status", "accepted",
+                "--acceptance-source", "human",
+            )
+            self.assertEqual(corrected["attempt_index"], 2)
+
+            self.run_cli(
+                home,
+                "record",
+                "--task", "task accepted immediately",
+                "--project", "metrics-project",
+                "--type", "implementation",
+                "--outcome", "success",
+                "--model", "same-model",
+                "--verification-status", "passed",
+                "--acceptance-status", "accepted",
+                "--acceptance-source", "human",
+            )
+
+            stats = self.run_cli(
+                home,
+                "stats",
+                "--project", "metrics-project",
+                "--type", "implementation",
+                "--model", "same-model",
+            )
+            self.assertEqual(stats["count"], 1)
+            group = stats["groups"][0]
+            self.assertEqual(group["acceptance_observed"], 3)
+            self.assertEqual(group["first_pass_observed"], 2)
+            self.assertEqual(group["first_pass_accepted"], 1)
+            self.assertEqual(group["first_pass_acceptance_rate_pct"], 50.0)
+
+    def test_rework_lineage_uses_latest_group_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "lineage-home"
+            first = self.run_cli(
+                home,
+                "record",
+                "--task", "branching rework",
+                "--outcome", "success",
+                "--verification-status", "passed",
+            )
+            second = self.run_cli(
+                home,
+                "record",
+                "--task", "branching rework",
+                "--parent-run-id", first["run_id"],
+                "--outcome", "success",
+                "--verification-status", "passed",
+            )
+            third = self.run_cli(
+                home,
+                "record",
+                "--task", "branching rework",
+                "--parent-run-id", first["run_id"],
+                "--outcome", "success",
+                "--verification-status", "passed",
+            )
+            self.assertEqual(second["attempt_index"], 2)
+            self.assertEqual(third["attempt_index"], 3)
+            self.assertEqual(third["task_group_id"], first["task_group_id"])
+
+    def test_negative_feedback_clears_accepted_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "feedback-home"
+            accepted = self.run_cli(
+                home,
+                "record",
+                "--task", "accepted then invalidated",
+                "--outcome", "success",
+                "--verification-status", "passed",
+                "--acceptance-status", "accepted",
+                "--acceptance-source", "human",
+            )
+            with closing(sqlite3.connect(home / "agent-lore.db")) as conn:
+                accepted_at = conn.execute(
+                    "SELECT accepted_at FROM runs WHERE id=?",
+                    (accepted["run_id"],),
+                ).fetchone()[0]
+            self.assertIsNotNone(accepted_at)
+
+            self.run_cli(home, "feedback", accepted["run_id"], "--verdict", "invalidate")
+            with closing(sqlite3.connect(home / "agent-lore.db")) as conn:
+                accepted_at = conn.execute(
+                    "SELECT accepted_at FROM runs WHERE id=?",
+                    (accepted["run_id"],),
+                ).fetchone()[0]
+            self.assertIsNone(accepted_at)
+
+    def test_import_replaces_knowledge_and_backs_up_full_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source_home = base / "source-home"
+            target_home = base / "target-home"
+            self.run_cli(source_home, "init")
+            imported_file = source_home / "knowledge" / "skills" / "imported" / "SKILL.md"
+            imported_file.parent.mkdir(parents=True)
+            imported_file.write_text("# imported", encoding="utf-8")
+            bundle = base / "portable.zip"
+            self.run_cli(source_home, "export", "--output", str(bundle))
+
+            self.run_cli(target_home, "init")
+            stale_file = target_home / "knowledge" / "skills" / "stale" / "SKILL.md"
+            stale_file.parent.mkdir(parents=True)
+            stale_file.write_text("# stale", encoding="utf-8")
+
+            restored = self.run_cli(target_home, "import", str(bundle))
+            backup = Path(restored["safety_backup"])
+            self.assertTrue((target_home / "knowledge" / "skills" / "imported" / "SKILL.md").exists())
+            self.assertFalse(stale_file.exists())
+            self.assertTrue((backup / "agent-lore.db").exists())
+            self.assertTrue((backup / "knowledge" / "skills" / "stale" / "SKILL.md").exists())
+
+    def test_skill_commands_resolve_from_skill_root(self) -> None:
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("python scripts/agent_lore.py", text)
+        self.assertIn('python "<agent-lore-skill-root>/scripts/agent_lore.py"', text)
+
+    def test_upgrades_v01_database_in_place(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "legacy-home"
             home.mkdir(parents=True)

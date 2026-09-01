@@ -46,7 +46,13 @@ def model_rows(conn: sqlite3.Connection, clauses: list[str], params: list[Any]) 
             SUM(CASE WHEN verification_status IN ('passed','not-required') THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
-            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated')
+                 AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_observed,
             SUM(CASE WHEN acceptance_status='rework' THEN 1 ELSE 0 END) AS reworks,
             AVG(quality_score) AS avg_quality,
             AVG(cost_usd) AS avg_cost,
@@ -156,8 +162,13 @@ def make_report(args: argparse.Namespace) -> str:
     for row in models:
         observed = int(row["acceptance_observed"] or 0)
         accepted = int(row["accepted"] or 0)
+        first_pass_observed = int(row["first_pass_observed"] or 0)
         acceptance = accepted / observed if observed else None
-        first_pass = int(row["first_pass_accepted"] or 0) / observed if observed else None
+        first_pass = (
+            int(row["first_pass_accepted"] or 0) / first_pass_observed
+            if first_pass_observed
+            else None
+        )
         lines.append(
             "| " + " | ".join(
                 [

@@ -12,6 +12,13 @@ metadata:
 
 Use Agent Lore as a local engineering-learning layer around coding work. It preserves useful engineering evidence across repositories and models, learns which agent configurations work well for which task families, tracks whether results were actually accepted, and can recommend how a multi-agent task should be organized.
 
+## Resolve the Skill runtime
+
+Resolve <agent-lore-skill-root> to the directory containing SKILL.md before
+running any command below. Do not assume the coding task's current working
+directory is the Skill directory. Keep the coding task's working directory
+unchanged so project inference continues to identify the active repository.
+
 ## Non-negotiable rules
 
 **Past experience is evidence, not truth.**
@@ -31,8 +38,8 @@ Agent Lore has three policy modes:
 Start new installations in `observe`. Move to `assist` and then `adaptive` only after real project outcomes exist.
 
 ```bash
-python scripts/agent_lore.py policy show
-python scripts/agent_lore.py policy set --mode assist
+python "<agent-lore-skill-root>/scripts/agent_lore.py" policy show
+python "<agent-lore-skill-root>/scripts/agent_lore.py" policy set --mode assist
 ```
 
 ## Before a non-trivial task
@@ -43,7 +50,7 @@ python scripts/agent_lore.py policy set --mode assist
 4. Retrieve only a small amount of relevant knowledge or ask for an integrated recommendation.
 
 ```bash
-python scripts/agent_lore.py retrieve \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
   --task "<task summary>" \
   --project "<project>" \
   --module "<module>" \
@@ -58,7 +65,7 @@ python scripts/agent_lore.py retrieve \
 Integrated recommendation:
 
 ```bash
-python scripts/agent_lore.py recommend \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" recommend \
   --task "<task summary>" \
   --project "<project>" \
   --module "<module>" \
@@ -107,7 +114,7 @@ project × module × task/subtype × agent role × model × harness
 Register routable configurations explicitly:
 
 ```bash
-python scripts/agent_lore.py config add \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" config add \
   --name fast-test-worker \
   --model <model-id> \
   --harness <runtime> \
@@ -119,7 +126,7 @@ python scripts/agent_lore.py config add \
 For a lead/orchestrator-capable configuration:
 
 ```bash
-python scripts/agent_lore.py config add \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" config add \
   --name backend-lead \
   --model <model-id> \
   --harness <runtime> \
@@ -165,7 +172,7 @@ A stronger challenger is justified by combinations of high risk, high uncertaint
 Record project/module/task context and timing when useful:
 
 ```bash
-python scripts/agent_lore.py record \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
   --task "<what was attempted>" \
   --project "<project>" \
   --module "authentication" \
@@ -220,7 +227,7 @@ Do not infer `verification-status=passed` merely because a verification note exi
 When the user/reviewer accepts a previous run:
 
 ```bash
-python scripts/agent_lore.py feedback <run-id> \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> \
   --verdict accept \
   --reason "meets expected behavior"
 ```
@@ -228,7 +235,7 @@ python scripts/agent_lore.py feedback <run-id> \
 When the user says the result needs rework:
 
 ```bash
-python scripts/agent_lore.py feedback <run-id> \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" feedback <run-id> \
   --verdict rework \
   --reason "technically correct but interaction is too complicated"
 ```
@@ -246,7 +253,7 @@ A rework is another attempt at the same logical task, not an unrelated run.
 Record the corrected attempt with:
 
 ```bash
-python scripts/agent_lore.py record \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
   --task "<same task>" \
   --parent-run-id <previous-run-id> \
   --outcome success \
@@ -269,7 +276,7 @@ This enables meaningful metrics such as:
 Only create reusable knowledge when there is a concise lesson with meaningful evidence:
 
 ```bash
-python scripts/agent_lore.py record ... \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" record ... \
   --lesson "<reusable lesson>" \
   --failure-reason "<established root cause if any>" \
   --solution "<concise procedure>"
@@ -296,21 +303,21 @@ explicit skill/eval promotion when justified
 Preview/apply conservative lifecycle maintenance:
 
 ```bash
-python scripts/agent_lore.py consolidate
-python scripts/agent_lore.py consolidate --apply
+python "<agent-lore-skill-root>/scripts/agent_lore.py" consolidate
+python "<agent-lore-skill-root>/scripts/agent_lore.py" consolidate --apply
 ```
 
 Explicitly promote:
 
 ```bash
-python scripts/agent_lore.py promote <id> --kind pattern
-python scripts/agent_lore.py promote <id> --kind skill --name safe-schema-migration
+python "<agent-lore-skill-root>/scripts/agent_lore.py" promote <id> --kind pattern
+python "<agent-lore-skill-root>/scripts/agent_lore.py" promote <id> --kind skill --name safe-schema-migration
 ```
 
 Materialize learned skills:
 
 ```bash
-python scripts/agent_lore.py materialize-skills
+python "<agent-lore-skill-root>/scripts/agent_lore.py" materialize-skills
 ```
 
 Knowledge flagged `needs_revalidation` must not be promoted/materialized until revalidated.
@@ -322,7 +329,7 @@ The machine-facing CLI remains JSON-first, but users should be able to inspect w
 Generate a Markdown report:
 
 ```bash
-python scripts/agent_lore.py report
+python "<agent-lore-skill-root>/scripts/agent_lore.py" report
 ```
 
 Default output:
@@ -334,7 +341,7 @@ Default output:
 Drill down to a project/module/task family:
 
 ```bash
-python scripts/agent_lore.py report \
+python "<agent-lore-skill-root>/scripts/agent_lore.py" report \
   --project my-project \
   --module authentication \
   --type debugging
@@ -345,7 +352,7 @@ The report includes project/module/task/model comparisons, acceptance/first-pass
 Also inspect JSON statistics when needed:
 
 ```bash
-python scripts/agent_lore.py stats --project my-project --module authentication
+python "<agent-lore-skill-root>/scripts/agent_lore.py" stats --project my-project --module authentication
 ```
 
 ## Bias and failure controls
@@ -371,8 +378,8 @@ Store concise metadata, outcomes, feedback, verified lessons, and provenance ins
 ## Portability
 
 ```bash
-python scripts/agent_lore.py export --output agent-lore-backup.zip
-python scripts/agent_lore.py import agent-lore-backup.zip
+python "<agent-lore-skill-root>/scripts/agent_lore.py" export --output agent-lore-backup.zip
+python "<agent-lore-skill-root>/scripts/agent_lore.py" import agent-lore-backup.zip
 ```
 
 Do not use Git to synchronize the live SQLite database.

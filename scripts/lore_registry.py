@@ -143,7 +143,13 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
             SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS execution_successes,
             SUM(CASE WHEN verification_status IN ('passed','not-required') THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
-            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated')
+                 AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_observed,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
             AVG(CASE WHEN quality_score IS NOT NULL THEN quality_score END) AS avg_quality,
             AVG(cost_usd) AS avg_cost,
@@ -161,9 +167,10 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
     acceptance_observed = int(row["acceptance_observed"] or 0)
     execution_success_rate = (execution_successes + 1.0) / (runs + 2.0)
     acceptance_rate = (accepted + 1.0) / (acceptance_observed + 2.0) if acceptance_observed else None
+    first_pass_observed = int(row["first_pass_observed"] or 0)
     first_pass_rate = (
-        (int(row["first_pass_accepted"] or 0) + 1.0) / (acceptance_observed + 2.0)
-        if acceptance_observed
+        (int(row["first_pass_accepted"] or 0) + 1.0) / (first_pass_observed + 2.0)
+        if first_pass_observed
         else None
     )
     acceptance_confidence = min(1.0, acceptance_observed / 10.0)
@@ -182,6 +189,7 @@ def historical_config_stats(conn: sqlite3.Connection, config: sqlite3.Row, args:
         "execution_success_rate": execution_success_rate,
         "verified_runs": int(row["verified"] or 0),
         "acceptance_observed": acceptance_observed,
+        "first_pass_observed": first_pass_observed,
         "acceptance_rate": acceptance_rate,
         "first_pass_acceptance_rate": first_pass_rate,
         "effective_success": effective_success,

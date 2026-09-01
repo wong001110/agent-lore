@@ -1,5 +1,7 @@
 """Statistics, portability, and health operations."""
 
+from pathlib import PurePosixPath
+
 from lore_common import *  # noqa: F401,F403
 
 
@@ -36,7 +38,13 @@ def build_stats_query(args: argparse.Namespace) -> tuple[str, list[Any]]:
             ROUND(AVG(CASE WHEN verification_status IN ('passed','not-required') THEN 1.0 ELSE 0.0 END) * 100.0, 1) AS verification_pass_rate_pct,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
-            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated')
+                 AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_observed,
             SUM(CASE WHEN acceptance_status='rework' THEN 1 ELSE 0 END) AS reworks,
             ROUND(AVG(quality_score), 3) AS avg_quality,
             ROUND(AVG(cost_usd), 6) AS avg_cost_usd,
@@ -66,9 +74,12 @@ def cmd_stats(args: argparse.Namespace) -> int:
             item = dict(row)
             observed = int(row["acceptance_observed"] or 0)
             accepted = int(row["accepted"] or 0)
+            first_pass_observed = int(row["first_pass_observed"] or 0)
             item["acceptance_rate_pct"] = round(accepted / observed * 100.0, 1) if observed else None
             item["first_pass_acceptance_rate_pct"] = (
-                round(int(row["first_pass_accepted"] or 0) / observed * 100.0, 1) if observed else None
+                round(int(row["first_pass_accepted"] or 0) / first_pass_observed * 100.0, 1)
+                if first_pass_observed
+                else None
             )
             groups.append(item)
         routing = conn.execute(
@@ -143,41 +154,105 @@ def validate_snapshot(path: Path) -> None:
         conn.close()
 
 
+def portable_knowledge_path(name: str) -> Path | None:
+    normalized = name.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if not path.parts or path.parts[0] != "knowledge" or normalized.endswith("/"):
+        return None
+    relative_parts = path.parts[1:]
+    if (
+        not relative_parts
+        or any(part in ("", ".", "..") or ":" in part for part in relative_parts)
+        or path.is_absolute()
+    ):
+        raise ValueError(f"Unsafe knowledge path in export: {name}")
+    return Path(*relative_parts)
+
+
+def backup_import_state(p: dict[str, Path]) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup_dir = p["archive"] / f"pre-import-{stamp}"
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    if p["db"].exists():
+        safe_backup_database(p["db"], backup_dir / "agent-lore.db")
+    if p["knowledge"].exists():
+        shutil.copytree(p["knowledge"], backup_dir / "knowledge")
+    return backup_dir
+
+
 def cmd_import(args: argparse.Namespace) -> int:
     p = ensure_dirs()
     bundle = Path(args.bundle).expanduser().resolve()
     if not bundle.exists():
         raise FileNotFoundError(bundle)
 
-    with zipfile.ZipFile(bundle, "r") as zf:
-        names = set(zf.namelist())
-        if "manifest.json" not in names or "agent-lore.db" not in names:
-            raise ValueError("Not a valid Agent Lore portable export.")
-        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
-        if manifest.get("format") != "agent-lore-portable":
-            raise ValueError("Unsupported export format.")
+    had_database = p["db"].exists()
+    safety_backup: Path | None = None
+    rollback_knowledge: Path | None = None
+    database_replaced = False
+    knowledge_moved = False
+    knowledge_installed = False
 
-        with tempfile.TemporaryDirectory(prefix="agent-lore-import-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=".agent-lore-import-", dir=p["home"]) as tmp:
+        tmp_dir = Path(tmp)
+        snapshot = tmp_dir / "agent-lore.db"
+        staged_knowledge = tmp_dir / "knowledge"
+        staged_knowledge.mkdir()
+
+        with zipfile.ZipFile(bundle, "r") as zf:
+            names = set(zf.namelist())
+            if "manifest.json" not in names or "agent-lore.db" not in names:
+                raise ValueError("Not a valid Agent Lore portable export.")
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+            if manifest.get("format") != "agent-lore-portable":
+                raise ValueError("Unsupported export format.")
+
             snapshot = Path(tmp) / "agent-lore.db"
             snapshot.write_bytes(zf.read("agent-lore.db"))
             validate_snapshot(snapshot)
-            safety_backup = None
-            if p["db"].exists():
-                safety_backup = p["archive"] / f"pre-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-                safe_backup_database(p["db"], safety_backup)
-            shutil.copy2(snapshot, p["db"])
+
             for name in names:
-                if not name.startswith("knowledge/") or name.endswith("/"):
+                relative = portable_knowledge_path(name)
+                if relative is None:
                     continue
-                relative = Path(name).relative_to("knowledge")
-                if ".." in relative.parts:
-                    raise ValueError("Unsafe path in export.")
-                target = p["knowledge"] / relative
+                target = staged_knowledge / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(zf.read(name))
 
-    with connect():
-        pass
+        safety_backup = backup_import_state(p)
+        rollback_knowledge = p["home"] / f".knowledge-rollback-{stable_id()}"
+        pending_database = p["home"] / f".agent-lore-{stable_id()}.db"
+        shutil.copy2(snapshot, pending_database)
+
+        try:
+            os.replace(p["knowledge"], rollback_knowledge)
+            knowledge_moved = True
+            os.replace(staged_knowledge, p["knowledge"])
+            knowledge_installed = True
+            os.replace(pending_database, p["db"])
+            database_replaced = True
+            with connect():
+                pass
+        except Exception:
+            if pending_database.exists():
+                pending_database.unlink()
+            if knowledge_installed and p["knowledge"].exists():
+                shutil.rmtree(p["knowledge"])
+            if knowledge_moved and rollback_knowledge.exists():
+                os.replace(rollback_knowledge, p["knowledge"])
+            if database_replaced:
+                backup_database = safety_backup / "agent-lore.db"
+                if had_database and backup_database.exists():
+                    restore_database = p["home"] / f".agent-lore-restore-{stable_id()}.db"
+                    shutil.copy2(backup_database, restore_database)
+                    os.replace(restore_database, p["db"])
+                elif p["db"].exists():
+                    p["db"].unlink()
+            raise
+        else:
+            if rollback_knowledge.exists():
+                shutil.rmtree(rollback_knowledge)
+
     emit(
         {
             "status": "imported",

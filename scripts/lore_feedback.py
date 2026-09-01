@@ -59,7 +59,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
             """
             UPDATE runs
             SET acceptance_status=?, acceptance_reason=?, acceptance_source=?,
-                accepted_at=CASE WHEN ?='accepted' THEN ? ELSE accepted_at END
+                accepted_at=CASE WHEN ?='accepted' THEN ? ELSE NULL END
             WHERE id=?
             """,
             (status, args.reason, args.source, status, now, args.run_id),
@@ -107,7 +107,13 @@ def acceptance_summary(conn: sqlite3.Connection, clauses: list[str] | None = Non
             SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS execution_successes,
             SUM(CASE WHEN verification_status IN ('passed','not-required') THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
-            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE
+                WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated')
+                 AND attempt_index=1
+                THEN 1 ELSE 0 END) AS first_pass_observed,
             SUM(CASE WHEN acceptance_status='rework' THEN 1 ELSE 0 END) AS rework,
             SUM(CASE WHEN acceptance_status IN ('rejected','invalidated') THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN acceptance_status='pending' THEN 1 ELSE 0 END) AS pending
@@ -117,6 +123,7 @@ def acceptance_summary(conn: sqlite3.Connection, clauses: list[str] | None = Non
         values,
     ).fetchone()
     decided = int(row["accepted"] or 0) + int(row["rework"] or 0) + int(row["rejected"] or 0)
+    first_pass_observed = int(row["first_pass_observed"] or 0)
     return {
         "runs": int(row["runs"] or 0),
         "execution_successes": int(row["execution_successes"] or 0),
@@ -128,5 +135,10 @@ def acceptance_summary(conn: sqlite3.Connection, clauses: list[str] | None = Non
         "pending": int(row["pending"] or 0),
         "acceptance_decisions": decided,
         "acceptance_rate": (int(row["accepted"] or 0) / decided) if decided else None,
-        "first_pass_acceptance_rate": (int(row["first_pass_accepted"] or 0) / decided) if decided else None,
+        "first_pass_observed": first_pass_observed,
+        "first_pass_acceptance_rate": (
+            int(row["first_pass_accepted"] or 0) / first_pass_observed
+            if first_pass_observed
+            else None
+        ),
     }
