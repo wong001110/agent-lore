@@ -1,10 +1,10 @@
 # Agent Lore
 
-**Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents.**
+**Local-first continual learning, acceptance tracking, observability, adaptive routing, and security-invariant verification for coding agents.**
 
-Agent Lore turns coding-agent outcomes into reusable engineering evidence across projects, modules, models, and agent roles. It also tracks whether changes were technically verified and actually accepted, preserves rework lineage, compares model performance by real task context, and recommends model/topology/challenge policies.
+Agent Lore turns coding-agent outcomes into reusable engineering evidence across projects, modules, models, and agent roles. It also tracks whether changes were technically verified and actually accepted, preserves rework lineage, compares model performance by real task context, recommends model/topology/challenge policies, and derives adversarial security checks from explicit assets and trust boundaries.
 
-> Status: **Integrated Alpha / v0.5.0-alpha (Phase 1–4 + acceptance/observability)**. Cross-device synchronization/service mode remains deferred to Phase 5.
+> Status: **Integrated Alpha / v0.6.0-alpha (Phase 1–4 + acceptance/observability + security invariant gate)**. Cross-device synchronization/service mode remains deferred to Phase 5.
 
 ## What is implemented
 
@@ -34,6 +34,15 @@ Acceptance / observability extension
   parent-run rework lineage + attempt_index
   first-pass acceptance + rework-aware benchmark
   Markdown project/module/task reports
+
+Security invariant extension
+  asset + trust-boundary modeling
+  explicit allowed-flow invariants
+  adversarial security regression families
+  synthetic canary leakage testing
+  cross-context isolation checks
+  security-control mutation guidance
+  indirect prompt-injection / MCP-tool boundary checks
 ```
 
 ## Core principles
@@ -42,7 +51,9 @@ Acceptance / observability extension
 
 **Agent execution success is not final delivery success.**
 
-A run may compile and pass tests yet still be rejected because the requirement, product behavior, UX, maintainability, or integration result is wrong. Agent Lore therefore keeps execution, verification, and acceptance separate.
+**Functional success does not prove security.**
+
+A run may compile and pass tests yet still be rejected because the requirement, product behavior, UX, maintainability, integration result, or security boundary is wrong. Agent Lore therefore keeps execution, verification, and acceptance separate.
 
 ```text
 execution outcome
@@ -55,6 +66,37 @@ learning outcome
 ```
 
 Automatic knowledge promotion requires accepted and verified evidence.
+
+## Security invariant gate
+
+Security testing is modeled as explicit information-flow and authority invariants rather than a generic instruction to run a scanner.
+
+```text
+assets
+  → trust boundaries
+  → allowed flows
+  → invariants
+  → adversarial cases
+  → synthetic canaries
+  → security-control mutation where useful
+```
+
+A canonical example is provider credential isolation: changing an AI provider or base URL must not silently send the previous provider's credential to the new origin. The same model generalizes to logs, redirects, CI secrets, build artifacts, cross-user/project state, prompt-injection-to-tool paths, and MCP/tool poisoning.
+
+The baseline regression catalog starts with:
+
+- `SEC-001 Provider Credential Isolation`
+- `SEC-002 Cross-Origin Redirect Leakage`
+- `SEC-003 Log/Error Secret Leakage`
+- `SEC-004 Build Artifact Secret Leakage`
+- `SEC-005 Repository/History Secret Leakage`
+- `SEC-006 Cross-Context Isolation`
+- `SEC-007 CI Untrusted-Code Secret Access`
+- `SEC-008 Least-Privilege Credential Scope`
+- `SEC-009 Indirect Prompt Injection → Privileged Tool`
+- `SEC-010 MCP/Tool Poisoning`
+
+See [`references/SECURITY.md`](references/SECURITY.md) for the full security-invariant and adversarial-verification model.
 
 ## Repository layout
 
@@ -76,7 +118,8 @@ agent-lore/
 │  ├─ DATA_MODEL.md
 │  ├─ LIFECYCLE.md
 │  ├─ ROUTING.md
-│  └─ ACCEPTANCE.md
+│  ├─ ACCEPTANCE.md
+│  └─ SECURITY.md
 ├─ tests/
 │  └─ test_smoke.py
 ├─ .github/workflows/test.yml
@@ -204,6 +247,8 @@ python scripts/agent_lore.py record \
 For user-visible/product work, acceptance remains `pending` until relevant human/reviewer feedback exists.
 
 For a completely machine-verifiable task, record `--acceptance-status not-required` only when human/product judgment is genuinely unnecessary.
+
+For security-relevant work, functional/unit/E2E success is not enough when an applicable high-impact invariant remains untested or failed.
 
 ## Accept / rework / reject
 
@@ -358,6 +403,8 @@ Supported topology recommendations:
 
 Wall time and accumulated compute/coordination time should be recorded separately when possible; multi-agent can reduce user waiting time while increasing total compute/cost.
 
+For high-risk work, a security/adversarial worker can independently attempt to falsify explicit invariants. The lead/orchestrator should block advancement on a high-impact invariant failure rather than treating it as an informational review comment.
+
 ## Portability
 
 ```bash
@@ -395,6 +442,7 @@ Also track:
 - challenge ROI
 - topology overhead/conflicts
 - per-task model configuration utility
+- security invariant regression escapes / catches where evidence exists
 
 If memory or routing produces negative lift, revalidate or disable it rather than trusting history because it exists.
 
