@@ -2,11 +2,15 @@
 
 from lore_common import *  # noqa: F401,F403
 
+
 def build_stats_query(args: argparse.Namespace) -> tuple[str, list[Any]]:
     clauses = ["1=1"]
     params: list[Any] = []
     filters = [
+        ("source_project", getattr(args, "project", None)),
+        ("module", getattr(args, "module", None)),
         ("task_type", args.type),
+        ("task_subtype", getattr(args, "subtype", None)),
         ("language", args.language),
         ("framework", args.framework),
         ("model", args.model),
@@ -19,23 +23,36 @@ def build_stats_query(args: argparse.Namespace) -> tuple[str, list[Any]]:
             params.append(value)
     query = f"""
         SELECT
+            COALESCE(source_project, '(unknown)') AS project,
+            COALESCE(module, '(unknown)') AS module,
+            COALESCE(task_type, '(unknown)') AS task_type,
+            COALESCE(task_subtype, '(unknown)') AS task_subtype,
             COALESCE(model, '(unknown)') AS model,
             COALESCE(harness, '(unknown)') AS harness,
             COALESCE(agent_role, '(unknown)') AS agent_role,
-            COALESCE(task_type, '(unknown)') AS task_type,
             COALESCE(topology, '(unknown)') AS topology,
             COUNT(*) AS runs,
-            ROUND(AVG(CASE WHEN outcome = 'success' THEN 1.0 ELSE 0.0 END) * 100.0, 1) AS success_rate_pct,
+            ROUND(AVG(CASE WHEN outcome = 'success' THEN 1.0 ELSE 0.0 END) * 100.0, 1) AS execution_success_rate_pct,
+            ROUND(AVG(CASE WHEN verification_status IN ('passed','not-required') THEN 1.0 ELSE 0.0 END) * 100.0, 1) AS verification_pass_rate_pct,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
+            SUM(CASE WHEN acceptance_status='accepted' AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE WHEN acceptance_status='rework' THEN 1 ELSE 0 END) AS reworks,
             ROUND(AVG(quality_score), 3) AS avg_quality,
             ROUND(AVG(cost_usd), 6) AS avg_cost_usd,
+            ROUND(AVG(COALESCE(wall_time_ms, latency_ms)), 1) AS avg_wall_time_ms,
+            ROUND(AVG(compute_time_ms), 1) AS avg_compute_time_ms,
+            ROUND(AVG(verification_time_ms), 1) AS avg_verification_time_ms,
+            ROUND(AVG(review_time_ms), 1) AS avg_review_time_ms,
+            ROUND(AVG(coordination_time_ms), 1) AS avg_coordination_time_ms,
             ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
             ROUND(AVG(retry_count), 2) AS avg_retries,
             ROUND(AVG(COALESCE(merge_conflicts, 0)), 2) AS avg_merge_conflicts,
             ROUND(AVG(COALESCE(agent_count, 1)), 2) AS avg_agent_count
         FROM runs
         WHERE {" AND ".join(clauses)}
-        GROUP BY model, harness, agent_role, task_type, topology
-        ORDER BY runs DESC, success_rate_pct DESC
+        GROUP BY source_project, module, task_type, task_subtype, model, harness, agent_role, topology
+        ORDER BY runs DESC, execution_success_rate_pct DESC
     """
     return query, params
 
@@ -44,6 +61,16 @@ def cmd_stats(args: argparse.Namespace) -> int:
     query, params = build_stats_query(args)
     with connect() as conn:
         rows = conn.execute(query, params).fetchall()
+        groups: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            observed = int(row["acceptance_observed"] or 0)
+            accepted = int(row["accepted"] or 0)
+            item["acceptance_rate_pct"] = round(accepted / observed * 100.0, 1) if observed else None
+            item["first_pass_acceptance_rate_pct"] = (
+                round(int(row["first_pass_accepted"] or 0) / observed * 100.0, 1) if observed else None
+            )
+            groups.append(item)
         routing = conn.execute(
             """
             SELECT mode, recommended_topology, challenge_level,
@@ -55,13 +82,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
             ORDER BY decisions DESC
             """
         ).fetchall()
-    emit(
-        {
-            "groups": [dict(row) for row in rows],
-            "count": len(rows),
-            "routing": [dict(row) for row in routing],
-        }
-    )
+    emit({"groups": groups, "count": len(groups), "routing": [dict(row) for row in routing]})
     return 0
 
 
@@ -178,8 +199,12 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         candidates = conn.execute("SELECT COUNT(*) FROM experiences WHERE status='candidate'").fetchone()[0]
         patterns = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='pattern' AND status='active'").fetchone()[0]
         skills = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='skill' AND status='active'").fetchone()[0]
+        revalidation = conn.execute("SELECT COUNT(*) FROM experiences WHERE needs_revalidation=1").fetchone()[0]
         configs = conn.execute("SELECT COUNT(*) FROM agent_configs WHERE enabled=1").fetchone()[0]
         decisions = conn.execute("SELECT COUNT(*) FROM routing_decisions").fetchone()[0]
+        pending_acceptance = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='pending'").fetchone()[0]
+        accepted = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status IN ('accepted','not-required')").fetchone()[0]
+        reworks = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='rework'").fetchone()[0]
         current_policy = policy(conn)
     emit(
         {
@@ -195,6 +220,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             "candidates": candidates,
             "patterns": patterns,
             "skills": skills,
+            "needs_revalidation": revalidation,
+            "accepted_runs": accepted,
+            "rework_runs": reworks,
+            "awaiting_acceptance": pending_acceptance,
             "enabled_agent_configs": configs,
             "routing_decisions": decisions,
             "policy": current_policy,
