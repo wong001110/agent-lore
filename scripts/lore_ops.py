@@ -275,6 +275,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         patterns = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='pattern' AND status='active'").fetchone()[0]
         skills = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='skill' AND status='active'").fetchone()[0]
         revalidation = conn.execute("SELECT COUNT(*) FROM experiences WHERE needs_revalidation=1").fetchone()[0]
+        revalidation_events = conn.execute("SELECT COUNT(*) FROM knowledge_revalidations").fetchone()[0]
         configs = conn.execute("SELECT COUNT(*) FROM agent_configs WHERE enabled=1").fetchone()[0]
         decisions = conn.execute("SELECT COUNT(*) FROM routing_decisions").fetchone()[0]
         pending_acceptance = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='pending'").fetchone()[0]
@@ -296,6 +297,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             "patterns": patterns,
             "skills": skills,
             "needs_revalidation": revalidation,
+            "revalidation_events": revalidation_events,
             "accepted_runs": accepted,
             "rework_runs": reworks,
             "awaiting_acceptance": pending_acceptance,

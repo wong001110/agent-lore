@@ -13,6 +13,7 @@ id
 source_project
 module
 task_type / task_subtype / task_summary
+task_summary_canonical / source_language / canonicalizer / canonicalized_at
 task_scope / operation
 task_group_id / parent_run_id / attempt_index
 language / framework / version
@@ -97,6 +98,8 @@ knowledge_name
 source_project
 module / task_type / task_subtype
 lesson
+task_summary_canonical / lesson_canonical / solution_summary_canonical
+source_language / canonicalizer / canonicalized_at
 failure_reason
 solution_summary
 confidence / utility
@@ -112,6 +115,23 @@ superseded_by
 `confidence` is a weak metadata signal, not truth probability. `utility` is a lifecycle score, not authority.
 
 Negative acceptance feedback can set `needs_revalidation=1`; such knowledge is down-ranked and cannot be promoted/materialized until revalidated.
+
+Original-language text remains authoritative. Canonical text is an optional host-supplied cross-language retrieval representation, not a replacement or a claim that translation is exact.
+
+## knowledge_revalidations
+
+An immutable audit event records completion of an explicit knowledge revalidation:
+
+~~~text
+id
+experience_id
+run_id
+created_at
+reason
+source
+~~~
+
+The referenced run must be linked to the knowledge and must be successful, verified, and accepted. Revalidation clears the hold but does not reactivate deprecated or archived knowledge.
 
 ## `experience_evidence`
 
@@ -148,6 +168,17 @@ notes
 ## `routing_decisions`
 
 One row per integrated recommendation. It captures project/module/task context, risk/complexity/dependencies, recommended topology/configuration, challenge policy, confidence, and the final linked outcome run.
+
+Version 0.8 additionally persists:
+
+~~~text
+task_summary_canonical / source_language
+task_shape_json / evidence_plan_json
+coordination / schedule / delegation_depth
+verification_tier / security_depth
+~~~
+
+The legacy topology field remains for compatibility. Coordination, schedule, and depth are the richer execution model.
 
 ## Task-conditioned performance
 

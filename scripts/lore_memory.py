@@ -5,23 +5,47 @@ from lore_common import *  # noqa: F401,F403
 
 def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_reuse: bool) -> list[dict[str, Any]]:
     limit = max(1, min(getattr(args, "limit", 5), 20))
+    memory_limit = max(0, int(policy(conn)["active_memory_limit"]))
+    if memory_limit == 0:
+        return []
+    candidate_limit = min(memory_limit, 10_000)
+    result_limit = min(limit, memory_limit)
+    project_evidence: set[str] = set()
+    requested_project = normalize(getattr(args, "project", None))
+    if requested_project:
+        project_evidence = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT DISTINCT e.experience_id
+                FROM experience_evidence e
+                JOIN runs r ON r.id=e.run_id
+                WHERE LOWER(TRIM(COALESCE(r.source_project, ''))) = ?
+                """,
+                (requested_project,),
+            ).fetchall()
+        }
     rows = conn.execute(
         """
         SELECT * FROM experiences
         WHERE status IN ('candidate', 'active')
           AND kind IN ('experience', 'pattern', 'skill')
         ORDER BY updated_at DESC
-        LIMIT 3000
-        """
+        LIMIT ?
+        """,
+        (candidate_limit,),
     ).fetchall()
 
     ranked: list[tuple[float, sqlite3.Row, list[str]]] = []
     for row in rows:
         score, reasons = row_score(row, args)
+        if row["id"] in project_evidence and "project-match" not in reasons:
+            score += 1.25
+            reasons.append("project-match")
         if score >= 0.75:
             ranked.append((score, row, reasons))
     ranked.sort(key=lambda item: item[0], reverse=True)
-    selected = ranked[:limit]
+    selected = ranked[:result_limit]
 
     if mark_reuse and selected:
         now = utc_now()
@@ -64,9 +88,14 @@ def retrieve_rows(conn: sqlite3.Connection, args: argparse.Namespace, *, mark_re
                 "language": row["language"],
                 "framework": row["framework"],
                 "framework_version": row["framework_version"],
+                "source_language": row["source_language"],
+                "task_summary_canonical": row["task_summary_canonical"],
                 "lesson": row["lesson"],
+                "lesson_canonical": row["lesson_canonical"],
                 "failure_reason": row["failure_reason"],
                 "solution_summary": row["solution_summary"],
+                "solution_summary_canonical": row["solution_summary_canonical"],
+                "canonicalizer": row["canonicalizer"],
                 "confidence": row["confidence"],
                 "utility": row["utility"],
                 "evidence_count": row["evidence_count"],
@@ -87,6 +116,8 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
         {
             "query": {
                 "task": args.task,
+                "task_canonical": getattr(args, "task_canonical", None),
+                "source_language": getattr(args, "source_language", None),
                 "project": getattr(args, "project", None),
                 "module": getattr(args, "module", None),
                 "type": args.type,
@@ -126,10 +157,12 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
         return None
 
     lesson_key = normalize(args.lesson)
+    lesson_canonical = getattr(args, "lesson_canonical", None)
+    canonical_key = normalize(lesson_canonical) or None
     existing = conn.execute(
         """
         SELECT * FROM experiences
-        WHERE lesson_key = ?
+        WHERE (lesson_key = ? OR (? IS NOT NULL AND lesson_canonical_key = ?))
           AND COALESCE(task_type, '') = COALESCE(?, '')
           AND COALESCE(task_subtype, '') = COALESCE(?, '')
           AND COALESCE(module, '') = COALESCE(?, '')
@@ -139,7 +172,7 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
         ORDER BY updated_at DESC
         LIMIT 1
         """,
-        (lesson_key, args.type, args.subtype, args.module, args.language, args.framework),
+        (lesson_key, canonical_key, canonical_key, args.type, args.subtype, args.module, args.language, args.framework),
     ).fetchone()
     successes, failures = outcome_counts(args.outcome)
     verified_now = args.verification_status in ("passed", "not-required")
@@ -156,6 +189,13 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
                 framework_version = COALESCE(?, framework_version),
                 failure_reason = COALESCE(?, failure_reason),
                 solution_summary = COALESCE(?, solution_summary),
+                task_summary_canonical = COALESCE(?, task_summary_canonical),
+                lesson_canonical = COALESCE(?, lesson_canonical),
+                lesson_canonical_key = COALESCE(?, lesson_canonical_key),
+                solution_summary_canonical = COALESCE(?, solution_summary_canonical),
+                source_language = COALESCE(?, source_language),
+                canonicalizer = COALESCE(?, canonicalizer),
+                canonicalized_at = CASE WHEN ? THEN ? ELSE canonicalized_at END,
                 confidence = MAX(confidence, ?),
                 evidence_count = evidence_count + 1,
                 success_count = success_count + ?,
@@ -173,6 +213,18 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
                 args.framework_version,
                 args.failure_reason,
                 args.solution,
+                getattr(args, "task_canonical", None),
+                lesson_canonical,
+                canonical_key,
+                getattr(args, "solution_canonical", None),
+                getattr(args, "source_language", None),
+                getattr(args, "canonicalizer", None),
+                1 if any((
+                    getattr(args, "task_canonical", None),
+                    lesson_canonical,
+                    getattr(args, "solution_canonical", None),
+                )) else 0,
+                now,
                 args.confidence,
                 successes,
                 failures,
@@ -193,8 +245,10 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             task_type, task_subtype, module, task_summary, language, framework, framework_version,
             lesson, lesson_key, failure_reason, solution_summary,
             confidence, success_count, failure_count, tags,
-            kind, trust, last_verified_at
-        ) VALUES (?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'experience', ?, ?)
+            kind, trust, last_verified_at,
+            task_summary_canonical, lesson_canonical, lesson_canonical_key,
+            solution_summary_canonical, source_language, canonicalizer, canonicalized_at
+        ) VALUES (?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'experience', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             experience_id,
@@ -218,6 +272,17 @@ def record_experience(conn: sqlite3.Connection, args: argparse.Namespace, now: s
             json.dumps(tags, ensure_ascii=False),
             args.trust,
             now if verified_now else None,
+            getattr(args, "task_canonical", None),
+            lesson_canonical,
+            canonical_key,
+            getattr(args, "solution_canonical", None),
+            getattr(args, "source_language", None),
+            getattr(args, "canonicalizer", None),
+            now if any((
+                getattr(args, "task_canonical", None),
+                lesson_canonical,
+                getattr(args, "solution_canonical", None),
+            )) else None,
         ),
     )
     return experience_id
@@ -257,6 +322,9 @@ def cmd_record(args: argparse.Namespace) -> int:
             args.framework = args.framework or parent["framework"]
             args.framework_version = args.framework_version or parent["framework_version"]
             args.agent_role = args.agent_role or parent["agent_role"]
+            args.task_canonical = args.task_canonical or parent["task_summary_canonical"]
+            args.source_language = args.source_language or parent["source_language"]
+            args.canonicalizer = args.canonicalizer or parent["canonicalizer"]
 
         experience_id = record_experience(conn, args, now, project, tags)
         accepted_at = now if args.acceptance_status == "accepted" else None
@@ -273,8 +341,9 @@ def cmd_record(args: argparse.Namespace) -> int:
                 cost_usd, retry_count, notes, tags, experience_id, quality_score, run_kind, topology,
                 agent_count, merge_conflicts, challenge_level, challenge_useful, route_decision_id,
                 files_touched, lines_changed, modules_touched, has_db_change,
-                has_api_contract_change, test_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                has_api_contract_change, test_count, task_summary_canonical,
+                source_language, canonicalizer, canonicalized_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -327,6 +396,10 @@ def cmd_record(args: argparse.Namespace) -> int:
                 bool_int(args.has_db_change),
                 bool_int(args.has_api_contract_change),
                 args.test_count,
+                args.task_canonical,
+                args.source_language,
+                args.canonicalizer,
+                now if args.task_canonical else None,
             ),
         )
 

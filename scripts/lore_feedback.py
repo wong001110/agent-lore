@@ -97,6 +97,93 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_revalidate(args: argparse.Namespace) -> int:
+    """Clear a revalidation flag only with linked, successful, accepted evidence."""
+    now = utc_now()
+    source = args.source or "reviewer"
+    with connect() as conn:
+        # Keep the eligibility check, evidence update, knowledge update, and
+        # audit record atomic. A run must not become eligible between checks.
+        conn.execute("BEGIN IMMEDIATE")
+        experience = conn.execute(
+            "SELECT * FROM experiences WHERE id=?",
+            (args.id,),
+        ).fetchone()
+        if not experience:
+            raise ValueError(f"unknown knowledge id: {args.id}")
+
+        run = conn.execute("SELECT * FROM runs WHERE id=?", (args.run_id,)).fetchone()
+        if not run:
+            raise ValueError(f"unknown run id: {args.run_id}")
+
+        evidence = conn.execute(
+            "SELECT relation FROM experience_evidence WHERE experience_id=? AND run_id=?",
+            (args.id, args.run_id),
+        ).fetchone()
+        if not evidence:
+            raise ValueError(
+                f"run {args.run_id} is not linked as evidence for knowledge {args.id}"
+            )
+
+        if run["outcome"] != "success":
+            raise ValueError(
+                f"run {args.run_id} is not eligible for revalidation: outcome must be success"
+            )
+        if run["verification_status"] not in ("passed", "not-required"):
+            raise ValueError(
+                f"run {args.run_id} is not eligible for revalidation: "
+                "verification_status must be passed or not-required"
+            )
+        if run["acceptance_status"] not in ("accepted", "not-required"):
+            raise ValueError(
+                f"run {args.run_id} is not eligible for revalidation: "
+                "acceptance_status must be accepted or not-required"
+            )
+
+        revalidation_id = stable_id("revalidation-")
+        status_reason = f"revalidated by {source} using {args.run_id}"
+        if args.reason:
+            status_reason += f": {args.reason}"
+
+        conn.execute(
+            "UPDATE experience_evidence SET relation='supports' "
+            "WHERE experience_id=? AND run_id=?",
+            (args.id, args.run_id),
+        )
+        conn.execute(
+            """
+            UPDATE experiences
+            SET needs_revalidation=0, last_verified_at=?, status_reason=?, updated_at=?
+            WHERE id=?
+            """,
+            (now, status_reason, now, args.id),
+        )
+        conn.execute(
+            """
+            INSERT INTO knowledge_revalidations(
+                id, experience_id, run_id, created_at, reason, source
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (revalidation_id, args.id, args.run_id, now, args.reason, source),
+        )
+        conn.commit()
+
+    emit(
+        {
+            "status": "revalidated",
+            "revalidation_id": revalidation_id,
+            "knowledge_id": args.id,
+            "run_id": args.run_id,
+            "knowledge_status": experience["status"],
+            "needs_revalidation": False,
+            "last_verified_at": now,
+            "reason": args.reason,
+            "source": source,
+        }
+    )
+    return 0
+
+
 def acceptance_summary(conn: sqlite3.Connection, clauses: list[str] | None = None, params: list[Any] | None = None) -> dict[str, Any]:
     where = " AND ".join(clauses or ["1=1"])
     values = params or []

@@ -79,6 +79,14 @@ lower trust/ranking and no automatic promotion
 
 Preserve the historical case because it may explain context boundaries or recurring failure modes.
 
+Clear a revalidation hold only through the formal revalidate command and a linked run that is successful, verified, and accepted. The audit event records who/what supplied the decision and why. Revalidation restores eligibility for retrieval/promotion; it does not silently reactivate deprecated or archived knowledge.
+
+## Bilingual canonical memory
+
+Preserve original-language task, lesson, and procedure text. A host may attach an English canonical representation for cross-language retrieval, together with source language and canonicalizer provenance.
+
+Translation/canonicalization belongs to the host boundary. Agent Lore performs no hidden network call. If canonical text is absent, native Unicode/CJK retrieval remains available. Never translate secrets merely to improve retrieval.
+
 ## Skill promotion
 
 A Skill is a stronger procedural artifact. Promote it only when there is a useful procedure with accepted/verified evidence. Materialized Skills remain advisory unless a separate hard policy explicitly says otherwise.

@@ -138,7 +138,7 @@ The host harness remains responsible for:
 - tests and Git operations
 - provider calls
 
-Agent Lore may increasingly produce machine-readable TaskShape, EvidencePlan, routing, budget, and execution-tree guidance, but should stay harness-independent.
+Agent Lore accepts machine-readable host-supplied TaskShape/EvidencePlan data and produces routing, budget, and DAG-wave guidance. Repository-derived planning and actual execution remain host responsibilities so Agent Lore stays harness-independent.
 
 ## Counterfactual discipline
 

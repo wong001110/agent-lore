@@ -56,7 +56,7 @@ Schedule:     serial | parallel | hybrid
 Depth:        0 | 1 | 2+
 ```
 
-The current CLI legacy topology labels are coarse compatibility signals until the runtime data model is upgraded.
+The current runtime persists coordination, schedule, delegation depth, validated TaskShape, EvidencePlan, and DAG waves. Legacy topology labels remain compatibility signals.
 
 ## 4. Delegation contract and roles
 
@@ -223,7 +223,9 @@ Delegation Lift = accepted-result improvement - coordination/integration cost
 
 These signals inform future recommendations; they are not hard formulas. Never remove a required safety invariant merely because it rarely fails.
 
-## 15. Future runtime model
+## 15. Current and future runtime model
+
+Version 0.8 accepts host-supplied TaskShape/EvidencePlan JSON, validates the dependency graph and scope conflicts, and records the bounded execution recommendation. The host still owns repository analysis and execution.
 
 Future first-class execution-tree telemetry should capture enough information to separate topology effects from model/task confounders:
 

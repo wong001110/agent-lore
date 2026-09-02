@@ -2,7 +2,7 @@
 
 Agent Lore chooses **whether delegation is worthwhile**, **how work should be coordinated and scheduled**, **which registered configurations fit each role**, and **whether additional challenge is worth its cost**.
 
-The current alpha CLI still exposes legacy topology labels for compatibility. The policy model below is richer and should guide host-agent behavior until the runtime data model is upgraded.
+The v0.8 CLI accepts a host-reasoned TaskShape, validates dependencies and mutable scopes, emits executable DAG waves plus coordination/schedule/depth, and persists the decision. Legacy topology labels and coarse hints remain compatibility inputs.
 
 ## 1. Strong default: single agent
 
@@ -37,7 +37,9 @@ integration points
 verification/security surfaces
 ```
 
-The current CLI inputs (`parallelizable`, `cross-domain`, `estimated-subtasks`, `dependency-level`) are coarse hints, not a substitute for TaskShape analysis.
+Supply TaskShape with --task-shape-json as inline JSON or @path. The shape contains an objective, non-empty workstreams, dependency/read/write/contract scopes, and an explicit delegation decision. Agent Lore rejects dependency cycles and serializes overlapping mutable scopes.
+
+The legacy CLI inputs (`parallelizable`, `cross-domain`, `estimated-subtasks`, `dependency-level`) remain coarse fallback hints, not a substitute for TaskShape analysis.
 
 ## 3. Separate coordination, schedule, and depth
 
@@ -74,6 +76,8 @@ Legacy CLI compatibility mapping:
 - `flat-parallel` ≈ manager-worker, depth 1, parallel schedule
 - `lead-worker` ≈ manager-worker/hierarchical, depth >=1
 - `sequential` ≈ serial schedule signal, not a complete coordination shape
+
+The routing decision now stores both forms. New consumers should prefer coordination, schedule, delegation_depth, and execution_plan waves.
 
 ## 4. Task DAG and waves
 
@@ -184,7 +188,7 @@ verifier          -> fast deterministic/review config
 security red-team -> adversarial/security-capable config
 ```
 
-The current CLI chooses one primary configuration and should be treated as incomplete for heterogeneous execution trees.
+The current CLI chooses one primary delegation-capable configuration for the execution plan and should still be treated as incomplete for heterogeneous per-node execution trees.
 
 ## 11. Agent/model configuration router
 

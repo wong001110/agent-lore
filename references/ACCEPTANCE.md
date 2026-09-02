@@ -79,6 +79,19 @@ invalidate
 
 Negative feedback flags linked knowledge as `needs_revalidation` instead of silently keeping it authoritative.
 
+## Completing revalidation
+
+Revalidation is an explicit, audited operation. First record a corrected run against the same knowledge, with successful execution, passed/not-required verification, and accepted/not-required acceptance. Then run:
+
+~~~bash
+python scripts/agent_lore.py revalidate <knowledge-id> \
+  --run-id <corrected-run-id> \
+  --reason "the corrected evidence resolves the prior failure" \
+  --source reviewer
+~~~
+
+Agent Lore rejects unrelated, unverified, unsuccessful, or unaccepted runs. A successful revalidation clears needs_revalidation, refreshes last_verified_at, and records knowledge_revalidations evidence. It deliberately preserves deprecated/archived status.
+
 ## Rework lineage
 
 A rework is not an unrelated task. Record the corrected attempt with:

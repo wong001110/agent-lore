@@ -30,9 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-APP_VERSION = "0.7.0-alpha"
-SCHEMA_VERSION = "5"
+APP_VERSION = "0.8.0-alpha"
+SCHEMA_VERSION = "6"
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_+.#-]{2,}")
+CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 DEFAULT_POLICY: dict[str, str] = {
@@ -103,7 +104,15 @@ def ensure_dirs() -> dict[str, Path]:
 
 
 def emit(payload: Any) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False))
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False)
+    encoding = sys.stdout.encoding or "utf-8"
+    try:
+        rendered.encode(encoding)
+    except UnicodeEncodeError:
+        # Keep stdout valid JSON on Windows consoles/pipes that still use a
+        # legacy code page. JSON consumers decode the escaped text normally.
+        rendered = json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=False)
+    print(rendered)
 
 
 def normalize(value: str | None) -> str:
@@ -223,6 +232,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "experiences", "module", "TEXT")
     ensure_column(conn, "experiences", "task_subtype", "TEXT")
     ensure_column(conn, "experiences", "needs_revalidation", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "experiences", "task_summary_canonical", "TEXT")
+    ensure_column(conn, "experiences", "lesson_canonical", "TEXT")
+    ensure_column(conn, "experiences", "lesson_canonical_key", "TEXT")
+    ensure_column(conn, "experiences", "solution_summary_canonical", "TEXT")
+    ensure_column(conn, "experiences", "source_language", "TEXT")
+    ensure_column(conn, "experiences", "canonicalizer", "TEXT")
+    ensure_column(conn, "experiences", "canonicalized_at", "TEXT")
 
     # Phase 3/4 run context.
     ensure_column(conn, "runs", "quality_score", "REAL")
@@ -258,6 +274,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "runs", "has_db_change", "INTEGER")
     ensure_column(conn, "runs", "has_api_contract_change", "INTEGER")
     ensure_column(conn, "runs", "test_count", "INTEGER")
+    ensure_column(conn, "runs", "task_summary_canonical", "TEXT")
+    ensure_column(conn, "runs", "source_language", "TEXT")
+    ensure_column(conn, "runs", "canonicalizer", "TEXT")
+    ensure_column(conn, "runs", "canonicalized_at", "TEXT")
 
     conn.executescript(
         """
@@ -279,6 +299,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
             reason TEXT,
             source TEXT NOT NULL DEFAULT 'human',
             related_run_id TEXT,
+            FOREIGN KEY(run_id) REFERENCES runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS knowledge_revalidations (
+            id TEXT PRIMARY KEY,
+            experience_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'reviewer',
+            FOREIGN KEY(experience_id) REFERENCES experiences(id),
             FOREIGN KEY(run_id) REFERENCES runs(id)
         );
 
@@ -339,6 +370,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "routing_decisions", "source_project", "TEXT")
     ensure_column(conn, "routing_decisions", "module", "TEXT")
     ensure_column(conn, "routing_decisions", "task_subtype", "TEXT")
+    ensure_column(conn, "routing_decisions", "task_summary_canonical", "TEXT")
+    ensure_column(conn, "routing_decisions", "source_language", "TEXT")
+    ensure_column(conn, "routing_decisions", "task_shape_json", "TEXT")
+    ensure_column(conn, "routing_decisions", "evidence_plan_json", "TEXT")
+    ensure_column(conn, "routing_decisions", "coordination", "TEXT")
+    ensure_column(conn, "routing_decisions", "schedule", "TEXT")
+    ensure_column(conn, "routing_decisions", "delegation_depth", "INTEGER")
+    ensure_column(conn, "routing_decisions", "verification_tier", "TEXT")
+    ensure_column(conn, "routing_decisions", "security_depth", "TEXT")
 
     conn.executescript(
         """
@@ -354,6 +394,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_task_group ON runs(task_group_id, attempt_index);
         CREATE INDEX IF NOT EXISTS idx_runs_acceptance ON runs(acceptance_status, verification_status);
         CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_revalidations_experience ON knowledge_revalidations(experience_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_agent_configs_role ON agent_configs(agent_role, enabled);
         CREATE INDEX IF NOT EXISTS idx_routing_task_type ON routing_decisions(task_type, created_at);
         """
@@ -415,6 +456,11 @@ def tokenize(*values: str | None) -> set[str]:
     for value in values:
         if value:
             result.update(token.lower() for token in TOKEN_RE.findall(value))
+            for sequence in CJK_RE.findall(value):
+                if len(sequence) == 1:
+                    result.add(sequence)
+                else:
+                    result.update(sequence[index:index + 2] for index in range(len(sequence) - 1))
     return result
 
 
@@ -430,18 +476,32 @@ def freshness_value(updated_at: str | None) -> float:
 
 
 def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[str]]:
-    query_tokens = tokenize(args.task)
+    query_variants = [
+        ("native", tokenize(args.task)),
+        ("canonical", tokenize(getattr(args, "task_canonical", None))),
+    ]
     row_tokens = tokenize(
         row["task_summary"],
+        row["task_summary_canonical"],
         row["lesson"],
+        row["lesson_canonical"],
         row["failure_reason"],
         row["solution_summary"],
+        row["solution_summary_canonical"],
         row["tags"],
     )
-    overlap = len(query_tokens & row_tokens) / max(1, len(query_tokens))
+    overlaps = [
+        (label, len(tokens & row_tokens) / len(tokens))
+        for label, tokens in query_variants
+        if tokens
+    ]
+    overlap_label, overlap = max(overlaps, key=lambda item: item[1], default=("native", 0.0))
     score = overlap * 4.0
     reasons: list[str] = []
 
+    if normalize(getattr(args, "project", None)) and normalize(args.project) == normalize(row["source_project"]):
+        score += 1.25
+        reasons.append("project-match")
     if normalize(getattr(args, "type", None)) and normalize(args.type) == normalize(row["task_type"]):
         score += 3.0
         reasons.append("task-type-match")
@@ -481,5 +541,5 @@ def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[s
         score -= 1.0
         reasons.append("needs-revalidation")
     if overlap > 0:
-        reasons.append("semantic-token-overlap")
+        reasons.append(f"{overlap_label}-token-overlap")
     return score, reasons

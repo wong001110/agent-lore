@@ -1,11 +1,11 @@
 ---
 name: agent-lore
-description: Local-first continual learning, adaptive execution/routing, proportional verification, security-invariant guidance, and project-context workflow for coding agents. Use it to reuse accepted engineering evidence, choose the smallest useful single/multi-agent topology, reason about task DAGs and recursive delegation, plan risk-proportional verification/security, preserve rework lineage, and learn from outcomes without replacing current-model judgment.
+description: Local-first bilingual continual learning, adaptive execution/routing, proportional verification, security-invariant guidance, and project-context workflow for coding agents. Use it to reuse accepted engineering evidence, choose the smallest useful single/multi-agent topology, reason about task DAGs and recursive delegation, plan risk-proportional verification/security, preserve rework/revalidation lineage, and learn from outcomes without replacing current-model judgment.
 license: MIT
-compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the selected plan.
 metadata:
   author: wong001110
-  version: "0.7.0-alpha"
+  version: "0.8.0-alpha"
+  compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the selected plan.
 ---
 
 # Agent Lore
@@ -106,6 +106,7 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" policy set --mode assist
 ```bash
 python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
   --task "<task summary>" \
+  --task-canonical "<optional English canonical summary>" \
   --project "<project>" \
   --module "<module>" \
   --type "<task family>" \
@@ -116,7 +117,18 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
   --limit 5
 ```
 
-The current `recommend` CLI accepts coarse routing hints. Treat them as compatibility inputs, not ground truth; the host should reason from current TaskShape/repository evidence.
+Preserve original-language text. When the host can safely provide an English canonical form, store/query both forms; Agent Lore performs no hidden translation or network call. Native CJK bigram matching remains available as a local fallback.
+
+The recommend CLI accepts host-reasoned TaskShape and EvidencePlan JSON, produces DAG execution waves and modern coordination/schedule/depth output, and retains coarse routing hints for compatibility:
+
+~~~bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" recommend \
+  --task "<task summary>" \
+  --task-shape-json "@task-shape.json" \
+  --evidence-plan-json "@evidence-plan.json"
+~~~
+
+Repository evidence and model judgment should produce these inputs; the CLI validates and operationalizes them rather than pretending coarse labels are ground truth.
 
 # Adaptive execution
 
@@ -296,7 +308,18 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
   --verification-status passed
 ```
 
-User-visible/product/UX/architecture work normally remains acceptance-pending until relevant human/reviewer feedback. A corrected attempt should preserve rework lineage with `--parent-run-id`.
+User-visible/product/UX/architecture work normally remains acceptance-pending until relevant human/reviewer feedback. A corrected attempt should preserve rework lineage with --parent-run-id.
+
+After negative feedback, clear a knowledge hold only with a linked run that is successful, verified, and accepted:
+
+~~~bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" revalidate <knowledge-id> \
+  --run-id <accepted-verified-run-id> \
+  --reason "<why the new evidence resolves the concern>" \
+  --source reviewer
+~~~
+
+Revalidation is audited and does not silently reactivate deprecated or archived knowledge.
 
 Only create reusable knowledge when evidence supports a concise lesson. Do not invent root causes. Negative evidence should trigger revalidation rather than being hidden.
 
@@ -329,7 +352,7 @@ Store concise outcomes, provenance, acceptance/rework, verified lessons, routing
 
 Agent Lore remains harness-independent. The host harness owns process/agent spawning, filesystem/tool execution, sandboxing, provider calls, tests, and Git operations.
 
-Future runtime work may add first-class TaskShape, EvidencePlan, execution-tree telemetry, per-node routing, knowledge scope, and verification/security planners without turning Agent Lore into a universal process runner.
+The current runtime accepts first-class host-supplied TaskShape/EvidencePlan data and returns bounded execution guidance. Future work may add repository-derived planning, execution-tree telemetry, per-node routing, knowledge scope, and richer verification/security planners without turning Agent Lore into a universal process runner.
 
 # References
 

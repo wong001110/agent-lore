@@ -21,6 +21,14 @@ def add_context_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--framework-version")
 
 
+def add_canonical_task_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--task-canonical",
+        help="Optional English/canonical task text supplied by the host; original text is preserved",
+    )
+    parser.add_argument("--source-language", help="Source language hint, e.g. zh-CN or en")
+
+
 def add_routing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent-role")
     parser.add_argument("--complexity", choices=["low", "medium", "high"], default="medium")
@@ -50,12 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_retrieve = sub.add_parser("retrieve", help="Retrieve narrowly scoped reusable engineering knowledge.")
     p_retrieve.add_argument("--task", required=True)
     add_context_args(p_retrieve)
+    add_canonical_task_args(p_retrieve)
     p_retrieve.add_argument("--limit", type=int, default=5)
     p_retrieve.set_defaults(func=cmd_retrieve)
 
     p_record = sub.add_parser("record", help="Record one execution attempt plus verification/acceptance state.")
     p_record.add_argument("--task", required=True)
     add_context_args(p_record)
+    add_canonical_task_args(p_record)
     p_record.add_argument("--task-scope", help="Area such as backend, frontend, infra, mobile")
     p_record.add_argument("--operation", help="Operation such as implement, fix, refactor, test, review")
     p_record.add_argument("--outcome", required=True, choices=["success", "failure", "partial"], help="Execution outcome, not final user acceptance")
@@ -70,8 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_record.add_argument("--parent-run-id", help="Previous attempt when this run is a rework")
     p_record.add_argument("--task-group-id", help="Optional stable task group id; normally inferred")
     p_record.add_argument("--lesson")
+    p_record.add_argument("--lesson-canonical", help="Optional English/canonical lesson supplied by the host")
     p_record.add_argument("--failure-reason")
     p_record.add_argument("--solution")
+    p_record.add_argument("--solution-canonical", help="Optional English/canonical procedure supplied by the host")
+    p_record.add_argument("--canonicalizer", help="Translation/canonicalization model or process identifier")
     p_record.add_argument("--confidence", type=float, default=0.5)
     p_record.add_argument("--quality-score", type=float)
     p_record.add_argument("--cost-usd", type=float)
@@ -110,6 +123,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_feedback.add_argument("--source", choices=FEEDBACK_SOURCES, default="human")
     p_feedback.add_argument("--related-run-id", help="Optional corrected/replacement run")
     p_feedback.set_defaults(func=cmd_feedback)
+
+    p_revalidate = sub.add_parser(
+        "revalidate",
+        help="Clear a knowledge revalidation hold using linked accepted and verified evidence.",
+    )
+    p_revalidate.add_argument("id", help="Knowledge/experience id")
+    p_revalidate.add_argument("--run-id", required=True, help="Linked successful run used as evidence")
+    p_revalidate.add_argument("--reason", required=True)
+    p_revalidate.add_argument("--source", choices=FEEDBACK_SOURCES, default="reviewer")
+    p_revalidate.set_defaults(func=cmd_revalidate)
 
     p_consolidate = sub.add_parser("consolidate", help="Score lifecycle utility and conservatively promote/archive knowledge.")
     p_consolidate.add_argument("--apply", action="store_true", help="Apply safe lifecycle changes; otherwise preview.")
@@ -182,7 +205,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_recommend = sub.add_parser("recommend", help="Recommend knowledge, topology, agent config, and challenge level for a task.")
     p_recommend.add_argument("--task", required=True)
     add_context_args(p_recommend)
+    add_canonical_task_args(p_recommend)
     add_routing_args(p_recommend)
+    p_recommend.add_argument("--task-shape-json", help="Machine-readable TaskShape JSON, or @path to a JSON file")
+    p_recommend.add_argument("--evidence-plan-json", help="Machine-readable EvidencePlan JSON, or @path to a JSON file")
     p_recommend.add_argument("--mode", choices=["observe", "assist", "adaptive"])
     p_recommend.add_argument("--limit", type=int, default=3)
     p_recommend.set_defaults(func=cmd_recommend)

@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Lore Integrated Alpha implements Phase 1–4 locally while keeping the foundation model and coding harness replaceable.
+Agent Lore v0.8 Integrated Alpha implements Phase 1–4 locally while keeping the foundation model and coding harness replaceable.
 
 ## System boundary
 
@@ -39,7 +39,9 @@ Tentative model-native plan
  ↓
 Relevant knowledge retrieval
  ↓
-Topology + agent configuration + challenge recommendation
+Validated TaskShape/DAG + EvidencePlan
+ ↓
+Coordination/schedule/depth + agent configuration + challenge recommendation
  ↓
 Execution by host harness
  ↓
@@ -86,6 +88,8 @@ explicit skill/eval promotion
 
 Knowledge can be deprecated or archived without deletion. `experience_evidence` links runs to knowledge so project diversity can be measured instead of pretending repeated summaries are independent evidence.
 
+Negative feedback creates a revalidation hold. The formal revalidate operation requires linked accepted+verified evidence and preserves an immutable audit event.
+
 `consolidate` is intentionally conservative: it may promote repeated cross-project candidates and generalize strong experiences into patterns, but skill promotion and deprecation remain explicit decisions.
 
 ## Phase 3 — Capability intelligence
@@ -114,18 +118,18 @@ The unit of optimization is an **agent configuration**, not a universal model le
 
 ## Phase 4 — Adaptive routing
 
-### Topology router
+### Execution router
 
-Possible shapes:
+Modern output separates:
 
 ```text
-single
-flat-parallel
-lead-worker
-sequential
+coordination: single | manager-worker | hierarchical
+schedule: serial | parallel | hybrid
+depth: 0 | 1 | 2+
+DAG waves: [[workstream ids], ...]
 ```
 
-Cold start is heuristic and constrained by task dependencies, parallelizability, cross-domain scope, max depth, and max agents. Once enough outcomes exist, historical topology performance may override the heuristic when evidence is strong.
+A host-supplied TaskShape receives dependency-cycle validation, scope-conflict serialization, and budget caps. Legacy single/flat-parallel/lead-worker/sequential labels remain stored for compatibility. Without a TaskShape, cold start falls back to the older heuristic.
 
 ### Model/agent router
 
@@ -198,6 +202,7 @@ agent-lore.db
   evidence lineage
   agent configurations
   routing decisions
+  revalidation audit events
   policy
 
 knowledge/skills/
