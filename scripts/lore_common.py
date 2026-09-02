@@ -30,8 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-APP_VERSION = "0.8.0-alpha"
-SCHEMA_VERSION = "6"
+APP_VERSION = "0.8.2-alpha"
+SCHEMA_VERSION = "8"
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_+.#-]{2,}")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -278,6 +278,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "runs", "source_language", "TEXT")
     ensure_column(conn, "runs", "canonicalizer", "TEXT")
     ensure_column(conn, "runs", "canonicalized_at", "TEXT")
+    # Optional, host-supplied execution telemetry. not-collected is
+    # intentionally distinct from an empty/single-agent topology: older runs
+    # and hosts that do not expose an execution tree remain valid.
+    ensure_column(conn, "runs", "execution_capture_status", "TEXT NOT NULL DEFAULT 'not-collected'")
+    ensure_column(conn, "runs", "execution_capture_source", "TEXT")
+    ensure_column(conn, "runs", "execution_capture_notes", "TEXT")
+    ensure_column(conn, "runs", "execution_captured_at", "TEXT")
 
     conn.executescript(
         """
@@ -310,6 +317,42 @@ def init_schema(conn: sqlite3.Connection) -> None:
             reason TEXT NOT NULL,
             source TEXT NOT NULL DEFAULT 'reviewer',
             FOREIGN KEY(experience_id) REFERENCES experiences(id),
+            FOREIGN KEY(run_id) REFERENCES runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS knowledge_usage (
+            id TEXT PRIMARY KEY,
+            experience_id TEXT NOT NULL,
+            run_id TEXT,
+            created_at TEXT NOT NULL,
+            decision TEXT NOT NULL,
+            reason TEXT,
+            source TEXT NOT NULL DEFAULT 'host',
+            FOREIGN KEY(experience_id) REFERENCES experiences(id),
+            FOREIGN KEY(run_id) REFERENCES runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS run_agents (
+            run_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            parent_agent_id TEXT,
+            display_name TEXT,
+            role TEXT,
+            specialization TEXT,
+            model TEXT,
+            harness TEXT,
+            status TEXT,
+            task_summary TEXT,
+            depth INTEGER,
+            started_at TEXT,
+            finished_at TEXT,
+            wall_time_ms INTEGER,
+            compute_time_ms INTEGER,
+            cost_usd REAL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, agent_id),
             FOREIGN KEY(run_id) REFERENCES runs(id)
         );
 
@@ -391,10 +434,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_topology ON runs(topology, task_type);
         CREATE INDEX IF NOT EXISTS idx_runs_route_decision ON runs(route_decision_id);
         CREATE INDEX IF NOT EXISTS idx_runs_project_module ON runs(source_project, module, task_type, task_subtype);
+        CREATE INDEX IF NOT EXISTS idx_runs_report_recent ON runs(source_project, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_runs_task_group ON runs(task_group_id, attempt_index);
         CREATE INDEX IF NOT EXISTS idx_runs_acceptance ON runs(acceptance_status, verification_status);
         CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_revalidations_experience ON knowledge_revalidations(experience_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_usage_experience ON knowledge_usage(experience_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_knowledge_usage_run ON knowledge_usage(run_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_run_agents_run ON run_agents(run_id, depth, agent_id);
+        CREATE INDEX IF NOT EXISTS idx_run_agents_parent ON run_agents(run_id, parent_agent_id);
         CREATE INDEX IF NOT EXISTS idx_agent_configs_role ON agent_configs(agent_role, enabled);
         CREATE INDEX IF NOT EXISTS idx_routing_task_type ON routing_decisions(task_type, created_at);
         """

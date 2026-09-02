@@ -56,7 +56,7 @@ def build_stats_query(args: argparse.Namespace) -> tuple[str, list[Any]]:
             ROUND(AVG(latency_ms), 1) AS avg_latency_ms,
             ROUND(AVG(retry_count), 2) AS avg_retries,
             ROUND(AVG(COALESCE(merge_conflicts, 0)), 2) AS avg_merge_conflicts,
-            ROUND(AVG(COALESCE(agent_count, 1)), 2) AS avg_agent_count
+            ROUND(AVG(agent_count), 2) AS avg_agent_count
         FROM runs
         WHERE {" AND ".join(clauses)}
         GROUP BY source_project, module, task_type, task_subtype, model, harness, agent_role, topology
@@ -281,6 +281,16 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         pending_acceptance = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='pending'").fetchone()[0]
         accepted = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status IN ('accepted','not-required')").fetchone()[0]
         reworks = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='rework'").fetchone()[0]
+        agent_ledger_entries = conn.execute("SELECT COUNT(*) FROM run_agents").fetchone()[0]
+        complete_agent_capture = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE execution_capture_status='complete'"
+        ).fetchone()[0]
+        partial_agent_capture = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE execution_capture_status='partial'"
+        ).fetchone()[0]
+        missing_agent_capture = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE execution_capture_status='not-collected' OR execution_capture_status IS NULL"
+        ).fetchone()[0]
         current_policy = policy(conn)
     emit(
         {
@@ -301,6 +311,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             "accepted_runs": accepted,
             "rework_runs": reworks,
             "awaiting_acceptance": pending_acceptance,
+            "agent_ledger_entries": agent_ledger_entries,
+            "complete_agent_capture": complete_agent_capture,
+            "partial_agent_capture": partial_agent_capture,
+            "agent_capture_not_collected": missing_agent_capture,
             "enabled_agent_configs": configs,
             "routing_decisions": decisions,
             "policy": current_policy,

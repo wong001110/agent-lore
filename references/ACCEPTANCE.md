@@ -81,7 +81,19 @@ Negative feedback flags linked knowledge as `needs_revalidation` instead of sile
 
 ## Completing revalidation
 
-Revalidation is an explicit, audited operation. First record a corrected run against the same knowledge, with successful execution, passed/not-required verification, and accepted/not-required acceptance. Then run:
+Revalidation is an explicit, audited operation. First record a corrected run against the same knowledge, with successful execution, passed/not-required verification, and accepted/not-required acceptance. Use `--knowledge-id` when corrected wording differs or repeating a lesson would add no value:
+
+~~~bash
+python scripts/agent_lore.py record \
+  --task "<corrected attempt>" \
+  --knowledge-id <knowledge-id> \
+  --parent-run-id <previous-run-id> \
+  --outcome success \
+  --verification-status passed \
+  --acceptance-status accepted
+~~~
+
+The referenced knowledge must already exist. Explicit association preserves the stored reusable lesson and establishes evidence lineage; the relation is still derived from the run's execution, verification, and acceptance states, and linking alone never clears a hold. The host remains free to choose any verification method that supplies sufficient evidence for the current task and risk. Then run:
 
 ~~~bash
 python scripts/agent_lore.py revalidate <knowledge-id> \
@@ -125,6 +137,8 @@ This enables metrics such as:
 ## Learning policy
 
 Execution success alone must not promote reusable knowledge.
+
+Retrieval alone also must not count as reuse. A host records `usage <knowledge-id> --decision applied` only after knowledge actually informed execution. It may record `ignored` for auditability, but an ignored suggestion is neutral rather than negative evidence: the agent may have found a better current-project approach. Usage decisions do not prescribe a verification method and do not replace execution, verification, or acceptance evidence.
 
 Automatic lifecycle promotion requires accepted and verified evidence. A candidate can still preserve a useful failure or observation, but it should not become a strong reusable pattern merely because an agent produced code and tests happened to run.
 

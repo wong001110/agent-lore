@@ -7,6 +7,7 @@ from lore_feedback import *  # noqa: F401,F403
 from lore_lifecycle import *  # noqa: F401,F403
 from lore_registry import *  # noqa: F401,F403
 from lore_routing import *  # noqa: F401,F403
+from lore_execution import *  # noqa: F401,F403
 from lore_ops import *  # noqa: F401,F403
 from lore_report import *  # noqa: F401,F403
 
@@ -62,6 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_retrieve.add_argument("--limit", type=int, default=5)
     p_retrieve.set_defaults(func=cmd_retrieve)
 
+    p_usage = sub.add_parser(
+        "usage",
+        help="Record whether retrieved knowledge was actually applied or intentionally ignored.",
+    )
+    p_usage.add_argument("id", help="Knowledge/experience id")
+    p_usage.add_argument("--decision", required=True, choices=["applied", "ignored"])
+    p_usage.add_argument("--run-id", help="Optional run in which the usage decision was made")
+    p_usage.add_argument("--reason", help="Optional concise rationale for the usage decision")
+    p_usage.add_argument("--source", default="host", help="Harness, agent, reviewer, or human source label")
+    p_usage.set_defaults(func=cmd_usage)
+
     p_record = sub.add_parser("record", help="Record one execution attempt plus verification/acceptance state.")
     p_record.add_argument("--task", required=True)
     add_context_args(p_record)
@@ -79,6 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_record.add_argument("--acceptance-source", choices=FEEDBACK_SOURCES)
     p_record.add_argument("--parent-run-id", help="Previous attempt when this run is a rework")
     p_record.add_argument("--task-group-id", help="Optional stable task group id; normally inferred")
+    p_record.add_argument(
+        "--knowledge-id",
+        help=(
+            "Explicitly link this run to existing knowledge. This bypasses lesson-text matching, "
+            "but the id must already exist and revalidation eligibility is still checked separately."
+        ),
+    )
     p_record.add_argument("--lesson")
     p_record.add_argument("--lesson-canonical", help="Optional English/canonical lesson supplied by the host")
     p_record.add_argument("--failure-reason")
@@ -220,13 +239,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--topology", choices=TOPOLOGIES)
     p_stats.set_defaults(func=cmd_stats)
 
-    p_report = sub.add_parser("report", help="Generate a human-readable Markdown benchmark/acceptance report.")
+    p_report = sub.add_parser("report", help="Generate a rolling Markdown or static HTML observability report.")
     p_report.add_argument("--project")
     p_report.add_argument("--module")
     p_report.add_argument("--type")
     p_report.add_argument("--subtype")
+    p_report.add_argument("--format", choices=["markdown", "html"], default="markdown")
+    p_report.add_argument("--full", action="store_true", help="Include full historical detail instead of the bounded rolling window.")
     p_report.add_argument("--output")
     p_report.set_defaults(func=cmd_report)
+
+    p_agents = sub.add_parser(
+        "agents",
+        help="Record or inspect optional host-supplied per-run agent execution telemetry.",
+    )
+    agents_sub = p_agents.add_subparsers(dest="agents_command", required=True)
+    p_agents_record = agents_sub.add_parser(
+        "record",
+        help="Upsert an after-the-fact agent ledger without controlling how agents execute.",
+    )
+    p_agents_record.add_argument("run_id")
+    p_agents_record.add_argument(
+        "--manifest-json",
+        required=True,
+        help="Inline JSON object or @path with capture_status/source/notes/agents.",
+    )
+    p_agents_record.set_defaults(func=cmd_agents_record)
+    p_agents_show = agents_sub.add_parser("show", help="Show the agent ledger for one run.")
+    p_agents_show.add_argument("run_id")
+    p_agents_show.set_defaults(func=cmd_agents_show)
 
     p_export = sub.add_parser("export", help="Create a portable consistent snapshot.")
     p_export.add_argument("--output")

@@ -65,7 +65,7 @@ class AgentLoreIntegratedAlphaTest(unittest.TestCase):
 
             initialized = self.run_cli(home, "init")
             self.assertEqual(initialized["integrity"], "ok")
-            self.assertEqual(initialized["schema_version"], "6")
+            self.assertEqual(initialized["schema_version"], "8")
             self.assertEqual(initialized["policy"]["mode"], "observe")
 
             self.run_cli(
@@ -254,7 +254,7 @@ class AgentLoreIntegratedAlphaTest(unittest.TestCase):
             self.assertEqual(restored["status"], "imported")
             doctor = self.run_cli(restored_home, "doctor")
             self.assertEqual(doctor["integrity"], "ok")
-            self.assertEqual(doctor["schema_version"], "6")
+            self.assertEqual(doctor["schema_version"], "8")
             self.assertGreaterEqual(doctor["accepted_runs"], 1)
             self.assertGreaterEqual(doctor["rework_runs"], 1)
             self.assertEqual(doctor["skills"], 1)
@@ -434,7 +434,7 @@ class AgentLoreIntegratedAlphaTest(unittest.TestCase):
             conn.close()
 
             upgraded = self.run_cli(home, "init")
-            self.assertEqual(upgraded["schema_version"], "6")
+            self.assertEqual(upgraded["schema_version"], "8")
             doctor = self.run_cli(home, "doctor")
             self.assertEqual(doctor["integrity"], "ok")
             self.assertEqual(doctor["enabled_agent_configs"], 0)

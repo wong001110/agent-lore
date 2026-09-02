@@ -32,6 +32,7 @@ has_db_change / has_api_contract_change / test_count
 run_kind: primary | shadow | challenge
 topology
 agent_count / merge_conflicts
+execution_capture_status / execution_capture_source / execution_capture_notes / execution_captured_at
 challenge_level / challenge_useful
 route_decision_id
 experience_id
@@ -40,6 +41,30 @@ experience_id
 A run can exist without producing reusable knowledge.
 
 `outcome=success` means the execution attempt completed successfully. It is not equivalent to final acceptance.
+
+`execution_capture_status` is `complete | partial | not-collected`. It describes telemetry coverage, not execution quality. Existing and newly recorded runs default to `not-collected`; the absence of ledger rows must never be interpreted as proof that only one agent ran.
+
+## `run_agents`
+
+Optional after-the-fact observations of the actual host execution tree:
+
+```text
+run_id / agent_id
+parent_agent_id
+display_name
+role / specialization
+model / harness / status
+task_summary
+depth
+started_at / finished_at
+wall_time_ms / compute_time_ms / cost_usd
+metadata_json
+created_at / updated_at
+```
+
+The composite `(run_id, agent_id)` key lets a host incrementally upsert nodes. Only `agent_id` is required by the manifest. Unknown host-specific fields are retained in `metadata_json`, so the schema does not force one provider, role taxonomy, or execution engine.
+
+A `complete` capture requires every referenced parent in the same manifest, replaces earlier partial rows for that run, and stores an exact `runs.agent_count`. A `partial` capture may include an external/unseen parent and is incrementally upserted; its observed row count is not promoted to an exact agent count.
 
 ## Verification and acceptance
 
@@ -253,7 +278,17 @@ Human-readable generated reports live under:
 ~/.agent-lore/reports/
 ```
 
-`latest.md` is derived output and can be regenerated from the SQLite source of truth.
+`latest.md` and `latest.html` are derived output and can be regenerated from the SQLite source of truth. Reports default to bounded rolling detail while retaining all-history aggregates; `report --full` is the explicit full-history export. Static HTML loads no remote assets and starts no server.
+
+Reports distinguish:
+
+```text
+-         host supplied no measurement
+Pending   acceptance has not been decided
+N/A       metric does not apply
+```
+
+Reports default to English. The dash is reserved for genuinely uncollected values; it must not replace `Pending` or `N/A`, and missing measurements must not be fabricated as zero. Stored source text remains in its original language.
 
 ## Privacy boundary
 

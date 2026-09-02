@@ -17,6 +17,7 @@ Agent Lore v0.8 Integrated Alpha implements Phase 1–4 locally while keeping th
 │ Knowledge       Capability         Adaptive routing       │
 │ retrieve        model/role stats   topology               │
 │ record          agent configs      model config           │
+│ agent ledger    actual topology    capture coverage       │
 │ consolidate                        challenge               │
 └──────────────────────────┬────────────────────────────────┘
                            ▼
@@ -49,6 +50,8 @@ Deterministic verification
  ↓
 Record run + route decision outcome
  ↓
+Optionally attach actual host agent ledger
+ ↓
 Capability statistics + knowledge evidence
  ↓
 Consolidate / promote / revalidate / deprecate
@@ -67,6 +70,7 @@ Operations:
 - `export`
 - `import`
 - `doctor`
+- `agents record/show`
 
 SQLite is an operational catalog, not a transcript dump.
 
@@ -181,6 +185,9 @@ The host coding agent/harness is responsible for:
 - enforcing file/write scope
 - stopping runaway delegation
 - passing real outcome metadata back to Agent Lore
+- optionally passing an after-the-fact agent manifest when the harness exposes it
+
+The optional manifest observes execution only. Agent Lore does not require a spawn API, fixed role taxonomy, model provider, tool policy, or test workflow. `not-collected` and `partial` are first-class coverage states so absent telemetry cannot be mistaken for a one-agent run.
 
 ## Recursion and budget
 
@@ -202,6 +209,7 @@ agent-lore.db
   evidence lineage
   agent configurations
   routing decisions
+  optional run_agents execution ledger
   revalidation audit events
   policy
 

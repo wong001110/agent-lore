@@ -525,7 +525,7 @@ def cmd_recommend(args: argparse.Namespace) -> int:
     with connect() as conn:
         current_policy = policy(conn)
         mode = args.mode or current_policy["mode"]
-        knowledge = retrieve_rows(conn, args, mark_reuse=False)
+        knowledge = retrieve_rows(conn, args)
         if task_shape is not None:
             execution_plan = execution_plan_from_task_shape(task_shape, current_policy)
             topology = {

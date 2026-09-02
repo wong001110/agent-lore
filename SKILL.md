@@ -4,7 +4,7 @@ description: Local-first bilingual continual learning, adaptive execution/routin
 license: MIT
 metadata:
   author: wong001110
-  version: "0.8.0-alpha"
+  version: "0.8.2-alpha"
   compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the selected plan.
 ---
 
@@ -118,6 +118,18 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" retrieve \
 ```
 
 Preserve original-language text. When the host can safely provide an English canonical form, store/query both forms; Agent Lore performs no hidden translation or network call. Native CJK bigram matching remains available as a local fallback.
+
+Retrieval is not adoption and does not increment reuse. After the host decides whether retrieved evidence actually informed the work, it may record that decision explicitly:
+
+~~~bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" usage <knowledge-id> \
+  --decision applied \
+  --run-id <optional-run-id> \
+  --reason "<optional concise context>" \
+  --source "<host or reviewer label>"
+~~~
+
+Use `--decision ignored` to retain a neutral audit event when evidence was considered but not used. Ignoring knowledge must not reduce utility by itself; current constraints and model judgment may legitimately favor another approach.
 
 The recommend CLI accepts host-reasoned TaskShape and EvidencePlan JSON, produces DAG execution waves and modern coordination/schedule/depth output, and retains coarse routing hints for compatibility:
 
@@ -308,7 +320,35 @@ python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
   --verification-status passed
 ```
 
+If the host exposes actual agent topology, attach it after recording the run:
+
+~~~bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" agents record <run-id> \
+  --manifest-json "@agents.json"
+python "<agent-lore-skill-root>/scripts/agent_lore.py" agents show <run-id>
+~~~
+
+This ledger is optional observational telemetry, not a runner contract. It must not decide how agents spawn, delegate, select models/tools, or verify work. Use `capture_status=complete` only for a complete in-manifest tree; use `partial` when the host can expose only some nodes. Missing telemetry remains `not-collected` and is not evidence of single-agent execution. Generated reports default to English and render genuinely uncollected values as `-`; keep `Pending` and `N/A` explicit, and preserve stored source text in its original language.
+
+When a recorded run already has host-observed `model` or `harness`, `agents record` fills only missing values in its agent rows from that run. A manifest value always wins. Agent specialization is never guessed. Reports include per-run telemetry coverage and flag complete trees with optional metadata omitted as an observability follow-up only; this never blocks execution, changes topology, or becomes a verification gate.
+
+`report` defaults to a bounded rolling summary (recent detail plus all-history aggregates). Use `--full` only for a deliberate historical export. `--format html` writes a self-contained static dashboard with local table filtering; it starts no server and never loads remote assets.
+
 User-visible/product/UX/architecture work normally remains acceptance-pending until relevant human/reviewer feedback. A corrected attempt should preserve rework lineage with --parent-run-id.
+
+When corrected evidence belongs to existing knowledge but its lesson wording changed or should not be repeated, link it explicitly during recording:
+
+~~~bash
+python "<agent-lore-skill-root>/scripts/agent_lore.py" record \
+  --task "<corrected attempt>" \
+  --knowledge-id <knowledge-id> \
+  --parent-run-id <previous-run-id> \
+  --outcome success \
+  --verification-status passed \
+  --acceptance-status accepted
+~~~
+
+`--knowledge-id` must reference existing knowledge and establishes evidence lineage without relying on lesson-text equality. It does not rewrite the stored lesson or bypass revalidation eligibility. Verification techniques remain host-selected and proportional to the current task.
 
 After negative feedback, clear a knowledge hold only with a linked run that is successful, verified, and accepted:
 
@@ -352,7 +392,7 @@ Store concise outcomes, provenance, acceptance/rework, verified lessons, routing
 
 Agent Lore remains harness-independent. The host harness owns process/agent spawning, filesystem/tool execution, sandboxing, provider calls, tests, and Git operations.
 
-The current runtime accepts first-class host-supplied TaskShape/EvidencePlan data and returns bounded execution guidance. Future work may add repository-derived planning, execution-tree telemetry, per-node routing, knowledge scope, and richer verification/security planners without turning Agent Lore into a universal process runner.
+The current runtime accepts first-class host-supplied TaskShape/EvidencePlan data, returns bounded execution guidance, and can store an optional after-the-fact execution tree. Future work may add repository-derived planning, per-node routing, knowledge scope, and richer verification/security planners without turning Agent Lore into a universal process runner.
 
 # References
 

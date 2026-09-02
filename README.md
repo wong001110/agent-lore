@@ -4,7 +4,7 @@
 
 Agent Lore helps a coding harness reuse accepted engineering evidence, choose when delegation is worth it, plan proportional verification/security, and learn from outcomes without replacing current-model judgment.
 
-> Status: **Integrated Alpha / v0.8.0-alpha**. The learning/routing CLI, bilingual canonical memory, audited revalidation, host-supplied TaskShape/DAG waves, and EvidencePlan routing output are implemented. Repository-derived planning, per-node execution telemetry, persisted knowledge scope, and richer recursive runtime routing remain future work.
+> Status: **Integrated Alpha / v0.8.2-alpha**. The learning/routing CLI, bilingual canonical memory, audited revalidation and usage decisions, host-supplied TaskShape/DAG waves, EvidencePlan routing output, and optional per-run agent execution ledger are implemented. Repository-derived planning, persisted knowledge scope, and richer recursive runtime routing remain future work.
 
 ## Core principles
 
@@ -126,6 +126,8 @@ Agent Lore keeps execution, verification, and acceptance separate and preserves 
 
 Original-language knowledge is preserved. A host may additionally supply English canonical text for cross-language retrieval; the CLI never performs a hidden network translation. Native CJK bigram retrieval is the local fallback.
 
+Retrieval is read-only: a match is not evidence that the host adopted it. After deciding, the host may record `usage <knowledge-id> --decision applied|ignored`. Only `applied` increments reuse; `ignored` remains neutral and is retained solely as an audit event. The optional reason, source label, and run link describe context without prescribing how the agent must test or implement the task.
+
 Conceptually, learned knowledge is scoped as:
 
 ```text
@@ -134,7 +136,35 @@ task | module | project | stack | global
 
 Project progress/status remains in project-local docs. Agent Lore stores reusable engineering evidence, routing/verification outcomes, and learned patterns.
 
-Negative feedback places linked knowledge on revalidation hold. The revalidate command clears that hold only when a linked run is successful, verified, and accepted, and writes an audit event without changing deprecated/archived lifecycle state.
+Negative feedback places linked knowledge on revalidation hold. A corrected run can use `record --knowledge-id <id>` to link evidence explicitly even when its lesson wording changed or is omitted. The id must already exist, and explicit linking does not rewrite the stored reusable lesson. The `revalidate` command remains a separate operation: it clears the hold only when the linked run is successful, verified, and accepted, and writes an audit event without changing deprecated/archived lifecycle state.
+
+## Actual agent execution ledger
+
+After a run is recorded, a host may optionally attach the agents it actually used:
+
+```bash
+python scripts/agent_lore.py agents record <run-id> --manifest-json @agents.json
+python scripts/agent_lore.py agents show <run-id>
+```
+
+```json
+{
+  "capture_status": "complete",
+  "source": "host-harness",
+  "agents": [
+    {"agent_id": "/root", "role": "Orchestrator"},
+    {"agent_id": "/root/ui", "parent_agent_id": "/root", "role": "Worker", "specialization": "frontend"}
+  ]
+}
+```
+
+`agents.json` is a host-produced observation, not an execution plan. Each entry needs only an `agent_id`; parent, name, role, specialization, model, harness, status, task, depth, timing, cost, and arbitrary JSON metadata are optional. A complete capture validates the in-manifest parent tree, replaces any earlier partial snapshot for that run, and records an exact agent count. A partial capture may reference an unseen host-owned parent, is incrementally upserted, and never pretends its observed count is exact.
+
+When a run already records a host-observed model or harness, `agents record` inherits that value only into agent rows where it is absent. Explicit manifest values win, and specialization is never inferred. The report includes per-run coverage for specialization, model, and harness so missing optional telemetry is visible without becoming a task, routing, or verification requirement.
+
+Reports default to a bounded rolling summary. Use `report --format html` for a self-contained static dashboard with local filtering, or add `--full` only when a deliberate full-history export is needed. HTML output starts no server and loads no remote asset.
+
+Older runs and harnesses that do not expose execution topology remain valid as `not-collected`. Reports default to English and display genuinely uncollected metrics as `-`, undecided acceptance as `Pending`, and non-applicable cells as `N/A`. Stored source text remains in its original language.
 
 ## Repository layout
 
@@ -164,15 +194,18 @@ Runtime learning state stays outside the repository under `~/.agent-lore/` (or `
 ```bash
 python scripts/agent_lore.py init
 python scripts/agent_lore.py policy show
+python scripts/agent_lore.py usage --help
+python scripts/agent_lore.py record --help
 python scripts/agent_lore.py revalidate --help
 python scripts/agent_lore.py recommend --help
+python scripts/agent_lore.py agents --help
 ```
 
 Fresh installs start in `observe`, then can move to `assist`/`adaptive` after useful outcome evidence exists.
 
 ## Runtime boundary
 
-Agent Lore remains harness-independent. The host harness owns agent/process spawning, tools/filesystem, sandboxing, tests, Git, provider calls, and optional translation/canonicalization. Agent Lore validates host-supplied TaskShape/EvidencePlan data, emits bounded execution guidance, and stores policy, evidence, recommendations, learning, and audit history.
+Agent Lore remains harness-independent. The host harness owns agent/process spawning, tools/filesystem, sandboxing, tests, Git, provider calls, and optional translation/canonicalization. Agent Lore validates host-supplied TaskShape/EvidencePlan and optional after-the-fact agent ledger data, emits bounded execution guidance, and stores policy, evidence, recommendations, learning, and audit history.
 
 ## License
 
