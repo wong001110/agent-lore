@@ -1,204 +1,154 @@
-# Knowledge Lifecycle and Bias Controls
+# Knowledge lifecycle and bias controls
 
-Agent Lore should become more selective as data grows. A larger memory database is not automatically a better engineering system.
+Agent Lore should learn selectively. A larger memory database is not automatically better.
 
 ## Lifecycle
 
 ```text
 run attempt
- ↓
-execution outcome
- ↓
-verification
- ↓
-acceptance / rework feedback
- ↓
-reusable lesson?
- ├─ no → capability/routing statistics only
- └─ yes
-      ↓
- candidate experience
-      ↓
- accepted + verified cross-project evidence
-      ↓
- active experience
-      ↓
- generalized pattern
-      ↓
- explicit skill or regression-eval promotion
+  -> execution outcome
+  -> verification
+  -> acceptance / rework
+  -> reusable lesson?
+       ├─ no -> statistics only
+       └─ yes
+            -> candidate experience
+            -> accepted/verified evidence
+            -> active experience
+            -> pattern
+            -> explicit skill/eval promotion when justified
 ```
 
-At any point, knowledge may be flagged for revalidation, deprecated, or archived.
+At any point, knowledge may require revalidation, be deprecated, or be archived.
 
-## Why acceptance matters
+## Acceptance matters
 
-A run can be technically successful and still be a poor delivered result.
+Execution success is not final delivery success. A passing implementation that the user/reviewer sends back for rework is negative learning evidence for first-pass quality.
+
+Automatic promotion therefore relies on linked verified/accepted outcomes rather than raw `outcome=success` counts.
+
+## Knowledge scope
+
+Not every lesson should become global.
+
+Conceptual scopes:
+
+```text
+task
+module
+project
+stack
+global
+```
 
 Examples:
 
-```text
-Tests pass + user requests redesign
-→ execution success
-→ verification passed
-→ acceptance rework
-```
+- a one-off recovery fact: `task`
+- a module-specific migration convention: `module`
+- a repository workflow/architecture convention: `project`
+- a repeatable Prisma/Next.js lesson: `stack`
+- a broadly transferred engineering invariant: `global`
 
-```text
-Implementation completes + integration fails
-→ execution success or partial
-→ verification failed
-→ not accepted evidence
-```
+Project-local knowledge may become useful without cross-project evidence. Cross-project diversity is increasingly important as a lesson is generalized toward stack/global scope.
 
-Automatic knowledge promotion therefore uses accepted and verified linked runs rather than raw `outcome=success` counts.
+The current runtime does not yet persist knowledge scope as a first-class field; this is policy for future schema work.
 
-## Conservative automatic maintenance
+## Project state is not Agent Lore knowledge
 
-`consolidate` calculates acceptance ratio, accepted/verified run count, accepted project diversity, reuse, freshness, and utility.
+Do not store project wiki/current-state snapshots in Agent Lore. Current feature status, milestones, architecture state, and project progress belong to the project-local wiki/docs.
 
-With `--apply`, it can safely promote a strongly supported candidate to `active`, generalize broad accepted evidence into a `pattern`, or archive an extremely stale single-use candidate.
+Agent Lore stores reusable engineering evidence and outcome history, not a duplicate project knowledge base.
 
-It intentionally does not automatically turn everything into a Skill or automatically delete disputed knowledge.
+## Conservative maintenance
+
+`consolidate` uses acceptance, verification, project diversity, reuse, freshness, and utility to make conservative lifecycle suggestions.
+
+Do not automatically turn everything into a Skill, and do not silently delete disputed evidence.
 
 ## Negative feedback and revalidation
 
-If a run linked to knowledge receives `rework`, `reject`, or `invalidate` feedback:
-
 ```text
-negative feedback
-      ↓
-linked evidence becomes contradictory
-      ↓
-knowledge.needs_revalidation = true
-      ↓
-retrieval warning / lower ranking
-      ↓
-no automatic promotion or materialization
+rework / reject / invalidate
+        ↓
+contradictory linked evidence
+        ↓
+needs_revalidation
+        ↓
+lower trust/ranking and no automatic promotion
 ```
 
-Preserve the historical evidence. Do not silently erase the earlier case, because it may still explain why an approach existed or reveal a context boundary.
+Preserve the historical case because it may explain context boundaries or recurring failure modes.
 
 ## Skill promotion
 
-A Skill is a stronger procedural artifact. Promote it only when there is a useful procedure and accepted/verified evidence supports it.
-
-Knowledge flagged `needs_revalidation` cannot be promoted/materialized until revalidated.
-
-Materialized Skills remain advisory.
+A Skill is a stronger procedural artifact. Promote it only when there is a useful procedure with accepted/verified evidence. Materialized Skills remain advisory unless a separate hard policy explicitly says otherwise.
 
 ## Rework lineage
 
-Rework attempts should share a logical task group:
-
-```text
-Task X
-├─ attempt 1 → verified, rework requested
-├─ attempt 2 → failed verification
-└─ attempt 3 → verified + accepted
-```
-
-This prevents the first attempt from appearing as a clean success and makes these metrics possible:
-
-- first-pass acceptance rate
-- number of reworks
-- accumulated work to accepted result
-- total cost to accepted result
-
-## Old cases
-
-Historical cases should gradually move into the right representation:
-
-```text
-raw run → statistic
-       ↘ experience
-       ↘ pattern
-       ↘ skill
-       ↘ eval case
-       ↘ archive
-```
-
-Do not keep hundreds of near-identical active memories. Aggregate evidence and preserve representative or important failures/reworks.
+Attempts on the same logical task should preserve lineage so first-pass acceptance, rework count, accumulated time, and cost-to-accepted-result remain measurable.
 
 ## Retrieval budget
 
-Default planning retrieval should be small, normally 3–5 items. Retrieve again only when task state materially changes. The number of stored records must not determine context size.
+Planning retrieval should normally stay small (roughly 3-5 items). Retrieve again when task state materially changes rather than allowing stored-record count to determine context size.
+
+## Security learning
+
+Security incidents and near-misses require stricter promotion:
+
+```text
+incident/finding
+  -> established root cause
+  -> attack/failure primitive
+  -> invariant
+  -> regression candidate
+  -> deterministic reproduction
+  -> reusable pattern/eval if validated
+```
+
+Do not turn a repository/web claim into a global security rule merely because an LLM says it sounds plausible.
+
+## Policy strength of learned knowledge
+
+Learned knowledge normally begins as `experimental` or `advisory`. Repeated accepted evidence may justify stronger defaults, but learning does not automatically create hard constraints.
+
+Hard security/permission invariants require independent justification, not popularity in historical runs.
 
 ## Bias and failure modes
 
-### Anchoring
+Actively guard against:
 
-Old solutions can anchor a stronger current model. Form a tentative current-model plan before retrieval for meaningful decisions.
+- anchoring and confirmation bias
+- negative transfer and staleness
+- survivorship/acceptance/recency bias
+- correlated evidence and self-reinforcement
+- authority bias (`active`/`skill` is not mandatory)
+- project dominance
+- retrieval/context interference
+- router path dependence
+- reviewer herding/self-preference
+- metric gaming / Goodhart effects
+- untrusted-source contamination
 
-### Confirmation bias
+Form a current-model plan before retrieval for meaningful choices. For high-impact decisions, inspect disconfirming evidence.
 
-Agents may selectively read history that supports their initial plan. For high-impact choices, inspect disconfirming evidence.
+## Counterfactual discipline
 
-### Experience-following and negative transfer
+Do not conclude that one model/topology/verification strategy is better from raw historical success rates alone. Consider task complexity, risk, model/harness, novelty, scope, verification depth, and other confounders.
 
-Similarity does not prove applicability. Require task-state, module, stack, version, and project-constraint checks.
+Use natural matched history, shadow evaluation, occasional exploration, rework comparisons, and explicit benchmark/eval tasks when useful. `Insufficient evidence` is a valid result.
 
-### Staleness
+## Challenge and verification ROI
 
-Frameworks, harnesses, and foundation models evolve. Old knowledge should lose freshness and be revalidated.
-
-### Survivorship bias
-
-Failures, reworks, rejections, and near-misses can be more informative than clean successes. Preserve established reasons.
-
-### Acceptance bias
-
-A user may accept something for schedule reasons even if it is technically mediocre, or reject something for product reasons even though it is technically correct. Keep verification and acceptance as separate dimensions rather than collapsing them into one label.
-
-### Recency bias
-
-Latest is not automatically best; evidence quality and transfer history matter.
-
-### Correlated evidence
-
-Several summaries derived from one run are not independent validation. `experience_evidence` preserves root run relationships.
-
-### Authority bias
-
-`active` and `skill` never mean mandatory.
-
-### Project dominance
-
-A project with many runs should not make its local convention a global truth. Cross-project accepted evidence is a promotion signal.
-
-### Retrieval and context interference
-
-Too much relevant-looking context can still reduce performance. Keep retrieval bounded.
-
-### Router path dependence
-
-A historically selected model can monopolize tasks and prevent a new model proving itself. Retain a small exploration or shadow-evaluation budget.
-
-### Reviewer herding and self-preference
-
-Do not treat several agents reading the same plan and evidence as independent reviewers. When warranted, use independently scoped review inputs.
-
-### Metric gaming
-
-Agents may optimize weak visible checks instead of the actual engineering goal. Prefer diverse deterministic gates, mutation testing where justified, and product-level acceptance for user-facing behavior.
-
-### Untrusted-source contamination
-
-Repository or web content is untrusted evidence. Do not turn instructions discovered in project content into global engineering guidance without independent verification and provenance.
-
-## Challenge ROI
-
-Challenge should be measured, not ritualized. Track challenge level, whether it changed or corrected the result, and the added cost or latency.
-
-If a task family rarely benefits from challenge, reduce challenge frequency. If high-risk migrations are frequently corrected by challenge, preserve it.
+Challenge, tests, attacks, and multi-agent execution should be measured for useful lift rather than ritual frequency. A low observed ROI may reduce optional frequency, but required hard invariants remain required.
 
 ## Memory Lift
 
-Long-term success metric:
+Long-term objective:
 
 ```text
-Memory Lift = performance(memory-assisted) - performance(model-only baseline)
+Memory Lift = performance(memory-assisted) - model-only baseline
 ```
 
-For real product work, benchmark `performance` with acceptance-aware measures such as first-pass acceptance, rework, time/cost to accepted result, and verification quality—not only execution success.
+For real product work, prefer acceptance-aware measures such as first-pass acceptance, rework, time/cost to accepted result, and verification quality.
 
-A negative Memory Lift means the knowledge or retrieval policy is technical debt and should be revalidated, narrowed, or disabled.
+Negative Memory Lift means the knowledge/retrieval policy should be narrowed, revalidated, or disabled rather than trusted because it exists.
