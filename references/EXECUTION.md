@@ -1,220 +1,118 @@
 # Adaptive execution, verification, and commit policy
 
-Agent Lore should optimize for sufficient evidence at reasonable cost. More agents, more tests, deeper security attacks, and more commits are not automatically better.
+Agent Lore optimizes for **sufficient evidence at reasonable cost**. More agents, tests, attacks, and commits are not automatically better.
 
-## Core rule
+Policy categories here are reasoning aids unless explicitly marked hard. See `POLICY.md`.
 
-Use the **smallest execution topology and verification depth that is sufficient for the current task and risk**.
+## 1. Change impact
 
-```text
-change impact + blast radius + novelty + failure cost + history
-                         ↓
-                 verification budget
-                         ↓
-            cheapest high-value evidence first
-                         ↓
-                  enough evidence?
-                  ├─ yes → stop
-                  └─ no  → escalate
-```
+Judge more than diff size:
 
-Verification frequency and verification depth are different. Cheap local checks can run frequently; expensive E2E, mutation, broad security, red-team, and full regression checks should normally be amortized across meaningful checkpoints.
+- scope and blast radius
+- changed surfaces and contracts
+- read/write/destructive authority
+- trust/security boundaries
+- novelty/new dependency/provider/architecture
+- failure cost
+- relevant historical escapes/failures
 
-## 1. Change impact model
+A tiny authorization change can justify deeper verification than a large isolated demo.
 
-Classify a change by more than diff size.
+## 2. TaskShape, DAG, and execution waves
 
-Consider:
-
-- scope: local / module / cross-module / system
-- blast radius: isolated / shared / critical path
-- surfaces: UI, API, database, auth, secrets, external network, storage, CI/CD, agent tools/MCP, infra
-- contract changes: none / internal / external
-- data authority: read / write / destructive / privileged
-- novelty: known pattern / new dependency / new provider / new trust boundary / new architecture
-- failure cost: low / medium / high / critical
-- historical escape/failure rate for similar changes
-
-A three-line authorization change may deserve more verification than a 500-line isolated demo page.
-
-## 2. Task DAG and execution waves
-
-Represent non-trivial work as a dependency graph when decomposition materially helps.
+Use a working TaskShape when decomposition helps:
 
 ```text
-A backend ─────┐
-B frontend ────┼─> D integration
-C test fixture ┘
-
-E migration -> F API contract -> G E2E
+objective
+scope / risk / uncertainty
+workstreams + dependencies
+read/write/contract scopes
+integration points
+verification/security surfaces
 ```
 
-Independent nodes with disjoint mutable scopes may share an execution wave. Dependent nodes remain serial. A single task may contain parallel, serial, and nested segments.
+Represent dependencies as a DAG when useful. Independent nodes with disjoint mutable scopes may share an execution wave; dependent nodes remain serial. A task may mix parallel, serial, and nested segments.
 
-Before parallel execution, compare read/write/contract scopes. Overlapping mutable write scopes increase conflict risk and should normally serialize or receive explicit ownership boundaries.
+TaskShape is a working hypothesis and may change during execution.
 
-## 3. Delegation gain
+## 3. Delegation and nested agents
 
-Do not delegate merely because sub-agents are available.
+Single agent is the strong default. Delegate only when expected benefits clearly outweigh coordination/integration cost.
 
-Conceptually evaluate:
+Reason about:
 
 ```text
-Delegation Gain
-= parallelism gain
-+ context relief
-+ specialization gain
-+ independent-verification gain
-- coordination cost
-- integration risk
-- shared-state risk
-- duplicate work
-- extra compute/token cost
+benefits: parallelism, context relief, specialization, independent verification
+costs: coordination, integration, shared-state risk, duplicate work, compute/token cost
 ```
 
-If the expected gain is not clearly positive, keep the task with one agent.
+Nested delegation is recursive, not a `large-task` switch. Each child independently decides whether it can finish directly or needs local delegation. `max_depth` is a hard ceiling, not a target.
 
-## 4. Recursive routing and nested agents
-
-Nested delegation is not a size flag. Each child task must independently justify further delegation.
+Coordination, schedule, and depth remain separate:
 
 ```text
-route(root)
-  ├─ child A -> single
-  ├─ child B -> route(B)
-  │              ├─ B1
-  │              └─ B2
-  └─ child C -> single
+Coordination: single | manager-worker | hierarchical | peer-handoff
+Schedule:     serial | parallel | hybrid
+Depth:        0 | 1 | 2+
 ```
 
-Default progression:
+The current CLI legacy topology labels are coarse compatibility signals until the runtime data model is upgraded.
 
-- depth 0: single agent for small/tightly-coupled work
-- depth 1: main/manager + scoped workers for several stable workstreams
-- depth 2+: only when a child workstream itself has meaningful local decomposition and coordination value
+## 4. Delegation contract and roles
 
-`max_depth` is a safety ceiling, not a target.
+Structural roles:
 
-## 5. Coordination shape vs schedule
+- Orchestrator/Main
+- Domain Lead
+- Worker
+- Verifier
+- Challenger
+- Security Red-Team
 
-Do not collapse organization and scheduling into one concept.
+Domain labels such as backend/frontend/database are specializations, not permanent role classes.
 
-Coordination shape:
+A child contract should bound objective, scope, dependencies, read/write/contract scope, tools/authority, expected output, done criteria, verification, and budget. Avoid parallel workers with overlapping mutable ownership unless the overlap is explicitly coordinated.
+
+## 5. EvidencePlan
+
+Verification should prove claims, not maximize test count.
+
+A useful plan answers:
 
 ```text
-single
-manager-worker
-hierarchical
-peer-handoff (special cases)
+claims: what must be true?
+checks: what is the cheapest useful evidence?
+escalation: what would justify deeper verification?
+stop: when is evidence sufficient for current risk?
 ```
 
-Execution schedule:
-
-```text
-serial
-parallel
-hybrid
-```
-
-Delegation depth and breadth are separate dimensions.
-
-The current alpha CLI still emits legacy topology labels (`single`, `flat-parallel`, `lead-worker`, `sequential`). Treat them as coarse compatibility signals; the host should reason in the richer dimensions above until the runtime data model/router is upgraded.
-
-## 6. Delegation contract
-
-Do not spawn a child without a useful contract.
+Example:
 
 ```yaml
-objective:
-scope:
-excluded_scope:
-inputs:
-dependencies:
-read_scope:
-write_scope:
-contract_scope:
-tools:
-expected_output:
-done_when:
-verification:
-budget:
+claims:
+  - provider routing still works
+  - credentials stay bound to the trusted origin
+checks:
+  - targeted provider unit tests
+  - one routing integration test
+  - SEC-001 synthetic-canary check
+skip:
+  - unrelated browser regression
+escalate_if:
+  - unexpected redirect/fallback behavior
 ```
 
-The parent owns decomposition and integration. A child owns only the delegated scope unless explicitly authorized otherwise.
+## 6. Verification depth
 
-## 7. Structural roles
+V0-V4 are **risk/depth signals, not recipes**:
 
-Prefer a small set of structural roles rather than dozens of fixed domain-agent classes:
+- `V0` trivial
+- `V1` local
+- `V2` feature
+- `V3` cross-boundary/high-risk
+- `V4` critical/release
 
-- Orchestrator/Main — task shape, routing, integration, phase/checkpoint decisions
-- Domain Lead — local coordination for a child workstream that justifies nested delegation
-- Worker — scoped implementation/research work; normally no delegation
-- Verifier — independent deterministic verification where useful
-- Challenger — independent critique for unresolved risk/uncertainty
-- Security Red-Team — attempts to falsify explicit security invariants in an isolated test environment
-
-Frontend/backend/database/infra/mobile/research should usually be capabilities or specializations attached to a structural role, not permanent agent classes.
-
-## 8. Verification tiers
-
-Use proportional verification depth.
-
-### V0 — trivial
-
-Examples: docs, copy, isolated style-only change.
-
-Typical evidence:
-
-- syntax/format sanity if relevant
-- no broad tests
-- no security/red-team unless the change unexpectedly touches a sensitive boundary
-
-### V1 — local
-
-Examples: small localized implementation change.
-
-Typical evidence:
-
-- typecheck/lint or targeted unit checks
-- cheap static/security checks only when applicable
-
-### V2 — feature
-
-Examples: normal feature slice or module behavior change.
-
-Typical evidence:
-
-- relevant unit + impacted integration tests
-- selected security invariants if a sensitive surface changed
-- focused mutation only when it proves a meaningful guard
-
-### V3 — cross-boundary/high-risk
-
-Examples: auth, external provider credentials, DB migration, cross-module contract, payment/webhook, tenant isolation.
-
-Typical evidence:
-
-- integration + relevant E2E
-- focused adversarial/security tests
-- failure-path testing
-- security-control or high-value mutation where relevant
-
-### V4 — critical/release
-
-Examples: critical architecture/security change, release checkpoint, major migration.
-
-Typical evidence:
-
-- broader regression
-- deeper mutation where valuable
-- red-team/attack-chain tests for applicable surfaces
-- rollback/operational verification where relevant
-
-Do not map tiers from lines changed alone.
-
-## 9. Gate applicability
-
-Gates are conditional, not ritual.
+A model may escalate or reduce suggested depth when current evidence justifies it. Materially riskier deviation from a strong default should carry a concise reason.
 
 Potential gate families:
 
@@ -226,139 +124,83 @@ Potential gate families:
 - performance / resource
 - operational / deployment / rollback
 
-Derive applicable gates from changed surfaces, authority, contracts, trust boundaries, and failure cost.
+Only activate applicable gates.
 
-Examples:
+## 7. Progressive verification and early stopping
 
-```text
-UI copy -> V0/V1; no security gate
-API validation -> V1/V2; targeted input tests
-provider baseURL + credential -> V3; credential/origin security invariants
-schema + API contract -> V3/V4; migration + rollback + contract + integration
-```
-
-## 10. Progressive verification and early stopping
-
-Run cheap, high-information checks first.
+Run cheap/high-information evidence first.
 
 ```text
-cheap probe
-   ↓
-pass + low residual risk
-   -> stop
-
-uncertainty/failure remains
-   -> escalate depth
+cheap evidence
+      ↓
+residual risk low enough?
+  ├─ yes -> stop
+  └─ no  -> escalate
 ```
 
-Do not continue into an expensive suite merely because the suite exists.
+Do not run an expensive suite merely because it exists. Hard invariants that apply to the change still require proof and cannot be skipped by early stopping.
 
-## 11. Security and attack budget
+**Verification frequency != verification depth.** Cheap local checks may run frequently; broad E2E/regression, mutation, red-team, and attack-chain work normally belongs at integration/feature/release checkpoints.
 
-Security depth should be selected by applicability and risk:
+## 8. Security and attack budget
+
+Security depth is applicability/risk language:
 
 ```text
-none
-smoke
-focused
-deep
-adversarial
+none | smoke | focused | deep | adversarial
 ```
 
-Examples:
+Select attack families from the changed attack surface. Start with high-probability/high-impact cases and escalate variants/chains only when risk, novelty, findings, or residual uncertainty justify it.
 
-- provider credential change: prioritize credential isolation, redirects/fallbacks, stale state, logs
-- ordinary UI layout change: security normally not applicable
-- MCP/tool authority change: prioritize tool poisoning, prompt injection, approval bypass, privilege boundaries
+Security Red-Team attack simulation is limited to local/test/sandbox/ephemeral or explicitly authorized environments.
 
-Red-team work should start with a few high-probability attacks and escalate to attack mutation/chains only when risk, novelty, findings, or residual uncertainty justify it.
+## 9. Mutation budget
 
-## 12. Mutation budget
+Use mutation to prove important guards, not maximize mutation count. Prefer authorization/security conditions, validation boundaries, idempotency/concurrency controls, migration compatibility, and critical business rules. Skip broad mutation for low-risk presentation-only work.
 
-Mutation is expensive and should prove important tests rather than maximize mutation count.
+## 10. Shared verification across agents
 
-Prefer mutation for:
-
-- authorization/security guards
-- validation branches
-- idempotency/concurrency controls
-- migration compatibility guards
-- critical business rules
-
-Skip broad mutation for low-risk presentation-only changes.
-
-## 13. Shared verification across agents
-
-Workers should run cheap checks scoped to their work. Expensive integrated checks belong at integration barriers.
+Workers run cheap checks scoped to their work. Expensive integrated checks belong at barriers.
 
 ```text
 Worker A -> targeted backend checks
 Worker B -> targeted frontend checks
-Worker C -> fixture/test validation
+Worker C -> fixture checks
               ↓
         integration barrier
               ↓
-        one integrated E2E
+        integrated verification
 ```
 
-Avoid each worker independently running the same full suite.
+Reuse valid evidence while relevant code/dependency/contract assumptions remain unchanged; invalidate it when affected assumptions change.
 
-When safe, verification evidence can be reused while the relevant code/dependency fingerprint remains unchanged. Invalidate cached evidence when its assumptions or affected dependency graph change.
-
-## 14. Checkpoint vs Git commit
+## 11. Checkpoint vs Git commit
 
 Agent completion is not automatically a commit boundary.
 
-Use internal checkpoints/worktree commits when the harness needs isolation or mergeability, but final history should prefer coherent semantic commits.
-
-Commit when:
-
-1. a coherent logical change unit is complete;
-2. the workspace is at a stable integration state;
-3. relevant focused verification has passed;
-4. the next work has a meaningful semantic boundary.
-
-Do not commit every small edit or every child-agent completion.
-
-Small related changes should normally accumulate into a meaningful batch before verification/commit. Large or risky changes may use several semantic checkpoints when each checkpoint is independently coherent and recoverable.
-
-## 15. Commit batching examples
-
-Bad:
+Three concepts:
 
 ```text
-change two lines -> full tests -> commit
-change three lines -> full tests -> commit
-child agent done -> commit
+working edits       -> no commit required
+internal checkpoint -> optional harness/worktree/recovery commit
+semantic commit     -> coherent final history boundary
 ```
 
-Better:
+Prefer a semantic commit when the logical change is coherent, integration state is stable, relevant focused verification passed, and the next work has a meaningful semantic boundary.
 
-```text
-credential-profile refactor
-+ provider switching logic
-+ origin guard
-+ related tests
-      ↓
-focused + security verification
-      ↓
-commit: fix: bind provider credentials to trusted origins
-```
+Small related edits should normally accumulate before expensive integrated verification and final commit. Internal checkpoint commits may be squashed/regrouped.
 
-## 16. Dynamic re-planning
+## 12. Project wiki checkpoint
 
-Routing is not necessarily one-shot.
+At the same meaningful integration/feature checkpoint, Main/Integrator updates project-local wiki/current-state docs if project truth changed.
 
-Re-evaluate when:
+The project wiki is not an Agent Lore store. Agent Lore never needs to copy it.
 
-- repository inspection reveals materially different scope/dependencies
-- a supposedly independent task becomes shared-state coupled
-- a child task expands into a locally decomposable workstream
-- repeated conflicts/duplicate work reduce delegation value
-- risk/trust boundary changes
-- verification reveals a new failure class
+## 13. Dynamic re-planning, stop, and collapse
 
-Allow:
+Re-evaluate TaskShape/routing when repository inspection, conflicts, scope growth, dependencies, trust boundaries, or verification findings materially change the problem.
+
+Valid transitions include:
 
 ```text
 single -> manager-worker
@@ -367,52 +209,32 @@ manager-worker -> collapse to single
 child -> nested delegation
 ```
 
-within budget and depth limits.
+Monitor coordination cost, duplicate work, conflicts, idle agents, retries, compute/token cost, wall time, and residual uncertainty. Stop spawning/collapse when marginal delegation value turns negative.
 
-## 17. Stop and collapse policy
+## 14. Learning utility without ritual
 
-Besides max agents/depth, monitor:
-
-- token/compute cost
-- wall time
-- coordination overhead
-- duplicate work
-- merge/conflict rate
-- idle/waiting agents
-- retry count
-- residual uncertainty
-
-Stop spawning or collapse topology when marginal coordination benefit turns negative.
-
-## 18. Learning verification and delegation ROI
-
-Agent Lore should learn not only which model succeeds, but which verification/delegation choices provide lift.
-
-Useful conceptual metrics:
+Conceptual signals:
 
 ```text
-Test Utility = severity-weighted defects caught / execution cost
-Attack ROI = severity-weighted security findings / attack cost
+Test Utility    = severity-weighted defects caught / execution cost
+Attack ROI      = severity-weighted findings / attack cost
 Delegation Lift = accepted-result improvement - coordination/integration cost
 ```
 
-Do not automatically remove a safety-critical check merely because it rarely fails. Historical utility informs scheduling; current risk and required invariants remain hard constraints.
+These signals inform future recommendations; they are not hard formulas. Never remove a required safety invariant merely because it rarely fails.
 
-## 19. Future runtime data model
+## 15. Future runtime model
 
-The policy expects future execution-tree observability to include:
+Future first-class execution-tree telemetry should capture enough information to separate topology effects from model/task confounders:
 
 ```text
-execution/task node id
-parent node / depth
+node / parent / depth
 role / specialization / model / harness
 subtask + dependencies
 read/write/contract scopes
-started/finished timestamps
 cost/tokens/tool calls/retries
 verification evidence
-handoff quality
-integration rework/conflicts
+handoff/integration rework
 ```
 
-This is required before Agent Lore can reliably learn whether nested delegation itself produced positive lift rather than merely correlating with stronger models or easier/harder tasks.
+Until then, the richer execution model remains Skill/host policy rather than falsely claimed runtime automation.
