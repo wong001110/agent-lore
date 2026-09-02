@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.10+ with SQLite support and local filesystem access. Network access is not required. Adaptive recommendations require the host coding agent/harness to execute the selected plan.
 metadata:
   author: wong001110
-  version: "0.8.0-alpha"
+  version: "0.7.0-alpha"
 ---
 
 # Agent Lore
