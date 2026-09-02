@@ -4,7 +4,7 @@
 
 Agent Lore helps a coding harness reuse accepted engineering evidence, choose when delegation is worth it, plan proportional verification/security, and learn from outcomes without replacing current-model judgment.
 
-> Status: **Integrated Alpha / v0.8.0-alpha**. The learning/routing CLI is implemented. TaskShape/DAG execution trees, EvidencePlan automation, knowledge scope, and richer recursive runtime routing remain host-policy/future runtime work.
+> Status: **Integrated Alpha / v0.7.0-alpha**. The learning/routing CLI is implemented. TaskShape/DAG execution trees, EvidencePlan automation, knowledge scope, and richer recursive runtime routing remain host-policy/future runtime work.
 
 ## Core principles
 
