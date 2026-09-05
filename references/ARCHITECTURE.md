@@ -1,130 +1,180 @@
 # Architecture
 
-Agent Lore v0.8 Integrated Alpha implements Phase 1–4 locally while keeping the foundation model and coding harness replaceable.
+Agent Lore v0.9 is a **model/harness-independent sidecar control + evidence system** around coding work.
+
+It is deliberately not the agent's brain and not a universal coding runtime.
 
 ## System boundary
 
 ```text
-┌───────────────────────────────────────────────────────────┐
-│ Coding agent / harness                                    │
-│ planner · lead · worker · reviewer                        │
-└──────────────────────────┬────────────────────────────────┘
-                           │ SKILL.md + CLI
-                           ▼
-┌───────────────────────────────────────────────────────────┐
-│ Agent Lore                                                │
-│                                                           │
-│ Knowledge       Capability         Adaptive routing       │
-│ retrieve        model/role stats   topology               │
-│ record          agent configs      model config           │
-│ agent ledger    actual topology    capture coverage       │
-│ consolidate                        challenge               │
-└──────────────────────────┬────────────────────────────────┘
-                           ▼
-┌───────────────────────────────────────────────────────────┐
-│ ~/.agent-lore/                                            │
-│ agent-lore.db · knowledge/skills · archive · exports      │
-└───────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Project + current coding agent / harness                    │
+│                                                            │
+│ project AGENTS/docs/source/tests/ADRs                       │
+│ model-native planning · delegation · implementation · debug │
+└────────────────────────────┬─────────────────────────────────┘
+                             │ SKILL.md + CLI / host adapter
+                             ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Agent Lore sidecar                                          │
+│                                                            │
+│ Control plane          Evidence plane        Calibration    │
+│ policy/guardrails      runs/acceptance       model/config   │
+│ hard budgets           rework/revalidation   routing stats  │
+│ scope validation       scoped history        challenge ROI  │
+│                        agent telemetry        memory lift    │
+└────────────────────────────┬─────────────────────────────────┘
+                             ▼
+┌──────────────────────────────────────────────────────────────┐
+│ ~/.agent-lore/agent-lore.db                                 │
+│ canonical local structured state                            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-The repository is the **learning engine**. User-specific learning state is outside Git.
+The host remains responsible for execution and for enforcing capability boundaries it can enforce deterministically.
+
+## Cognitive / control / evidence split
+
+### Cognitive plane
+
+Owned by current model/harness:
+
+- understand current repository/task
+- choose plan/implementation
+- decide whether decomposition/delegation helps
+- debug/replan
+- choose appropriate tools/checks within allowed authority
+
+Agent Lore should not prescribe a reasoning procedure.
+
+### Control plane
+
+Agent Lore may define/record independently justified limits such as:
+
+- permission/write/network/credential boundaries
+- destructive-action approval
+- sandbox/production separation
+- hard budget / agent / delegation-depth ceilings
+
+Actual deterministic enforcement belongs in the host/tool layer where possible.
+
+### Evidence plane
+
+Agent Lore stores/derives:
+
+- run outcomes
+- verification state
+- acceptance/rework/rejection
+- evidence lineage/revalidation
+- scoped historical Evidence Capsules
+- model/harness statistics
+- routing decisions
+- optional after-the-fact execution tree
+- human-readable reports
+
+Evidence does not automatically become policy.
 
 ## End-to-end loop
 
 ```text
 Task
  ↓
-Current project inspection
+Discover/read project-owned context
  ↓
-Tentative model-native plan
+Inspect current source/tests/contracts
  ↓
-Relevant knowledge retrieval
+Current model forms native working plan
  ↓
-Validated TaskShape/DAG + EvidencePlan
+Optional pull-based historical evidence
  ↓
-Coordination/schedule/depth + agent configuration + challenge recommendation
+Optional TaskShape / EvidencePlan
  ↓
-Execution by host harness
+Host execution (possibly delegated)
  ↓
-Deterministic verification
+Deterministic/proportional verification
  ↓
-Record run + route decision outcome
+Record run + acceptance/rework + route outcome
  ↓
-Optionally attach actual host agent ledger
+Optionally attach actual execution ledger
  ↓
-Capability statistics + knowledge evidence
+Create/update scoped Evidence Capsule only when warranted
  ↓
-Consolidate / promote / revalidate / deprecate
+Consolidate / revalidate / deprecate / supersede patterns
  ↓
 Next task
 ```
 
-## Phase 1 — Local foundation
+Historical memory can be completely absent from the loop.
 
-Operations:
+## Project-context boundary
 
-- `init`
-- `retrieve`
-- `record`
-- `stats`
-- `export`
-- `import`
-- `doctor`
-- `agents record/show`
+Agent Lore does not own a project wiki and does not impose repository folders.
 
-SQLite is an operational catalog, not a transcript dump.
-
-## Phase 2 — Knowledge lifecycle
-
-Agent Lore distinguishes runs from learned knowledge.
+The host may discover semantic roles such as:
 
 ```text
-run observation
- ↓
-candidate experience
- ↓
-active experience
- ↓
-pattern
- ↓
-explicit skill/eval promotion
+agent instructions
+current state
+architecture
+decisions/incidents
+verification
+security
 ```
 
-Knowledge can be deprecated or archived without deletion. `experience_evidence` links runs to knowledge so project diversity can be measured instead of pretending repeated summaries are independent evidence.
+from whatever paths the project already uses.
 
-Negative feedback creates a revalidation hold. The formal revalidate operation requires linked accepted+verified evidence and preserves an immutable audit event.
+A future adapter may cache private/local semantic mappings under `~/.agent-lore/projects/`. Optional version-controlled mapping may be supported, but zero-config/no-repo-change remains the default.
 
-`consolidate` is intentionally conservative: it may promote repeated cross-project candidates and generalize strong experiences into patterns, but skill promotion and deprecation remain explicit decisions.
+## Historical evidence architecture
 
-## Phase 3 — Capability intelligence
+Canonical historical state remains structured in SQLite.
 
-`agent_configs` describes what the router is allowed to select:
+Knowledge lifecycle:
 
 ```text
-model
-harness
-agent role
-can_delegate
-max_depth
-quality-tier cold-start prior
-cost-tier cold-start prior
-priority
+run
+ ↓
+scoped evidence/experience
+ ↓
+active experience when justified
+ ↓
+reusable pattern when justified
 ```
 
-Observed runs then add task-conditioned evidence:
+v0.9 retires generated learned Agent Skills. Legacy `kind=skill` rows/files remain backward-compatible/read-only and are excluded from normal retrieval.
+
+Evidence Capsule fields separate:
+
+- observation/failure
+- invariant
+- root cause + epistemic status
+- applicability / not-proven boundaries
+- failure/problem family
+- historical solution variant + status
+- declared scope
+
+This lets future models use historical facts without inheriting old procedures as instructions.
+
+## Pull-based memory
+
+Memory modes:
 
 ```text
-task × language/framework × role × model × harness
-→ success / quality / cost / latency / retries
+off | guardrail | rescue | proactive
 ```
 
-The unit of optimization is an **agent configuration**, not a universal model leaderboard.
+- `off`: zero historical context
+- `guardrail`: compact failure/invariant cards, old procedures hidden
+- `rescue`: historical remedies may be revealed after difficulty/failure
+- `proactive`: deliberate reveal for high-risk/explicit historical analysis
 
-## Phase 4 — Adaptive routing
+Memory context is bounded by token budget and scope. `recommend` defaults to policy memory `off`; explicit `retrieve` defaults to `guardrail`.
 
-### Execution router
+## Adaptive execution boundary
 
-Modern output separates:
+TaskShape/EvidencePlan are host-supplied working hypotheses. Agent Lore validates/operationalizes them rather than pretending to understand a repository better than the current model.
+
+Modern routing vocabulary:
 
 ```text
 coordination: single | manager-worker | hierarchical
@@ -133,106 +183,87 @@ depth: 0 | 1 | 2+
 DAG waves: [[workstream ids], ...]
 ```
 
-A host-supplied TaskShape receives dependency-cycle validation, scope-conflict serialization, and budget caps. Legacy single/flat-parallel/lead-worker/sequential labels remain stored for compatibility. Without a TaskShape, cold start falls back to the older heuristic.
+Hard ceilings remain policy constraints. The current model may choose a smaller topology as capabilities improve.
 
-### Model/agent router
+Legacy heuristics remain fallback compatibility only.
 
-Selection blends:
+## Model/harness calibration
 
-- task-conditioned observed success
-- observed quality
-- observed cost/latency/retries
-- cold-start quality/cost tiers
-- configuration priority
-
-Low-sample observations are smoothed and remain low-confidence.
-
-### Challenge router
-
-Challenge is an escalation policy. Inputs include:
-
-- risk
-- uncertainty
-- cost of failure
-- memory conflict
-- stale memory
-- deterministic evidence strength
-
-Strong deterministic evidence should usually reduce reliance on another LLM.
-
-### Exploration
-
-Path dependence is controlled with a small exploration rate. Agent Lore exposes an under-sampled exploration candidate in deterministic slots. Shadow evaluation is preferred where possible, especially for new models.
-
-## Operating modes
+`agent_configs` describes currently available executors. Observed runs provide task-conditioned evidence:
 
 ```text
-observe  → recommendation logged, execution unchanged
-assist   → recommendation surfaced, parent decides
-adaptive → recommendation may be applied within guardrails
+task/project/module/stack
+× model
+× harness
+× role
+× topology
+→ execution/verification/acceptance
+→ quality/cost/timing/retries
 ```
 
-This separation allows the complete Phase 4 architecture to exist before enough historical data has accumulated to trust adaptive routing.
+The optimization unit is an executor/configuration in context, not a universal model leaderboard.
 
-## Host-harness responsibility
+A new model should normally require only registration + evaluation. It should not trigger architecture migration.
 
-Agent Lore is a Skill + local CLI. It does not itself provide universal process spawning or provider APIs.
+Memory preference is also model/task dependent; use matched/shadow evaluation to estimate Memory Lift where useful.
 
-The host coding agent/harness is responsible for:
+## Security architecture
 
-- invoking a selected model/configuration
-- spawning sub-agents if supported
-- enforcing file/write scope
-- stopping runaway delegation
-- passing real outcome metadata back to Agent Lore
-- optionally passing an after-the-fact agent manifest when the harness exposes it
-
-The optional manifest observes execution only. Agent Lore does not require a spawn API, fixed role taxonomy, model provider, tool policy, or test workflow. `not-collected` and `partial` are first-class coverage states so absent telemetry cannot be mistaken for a one-agent run.
-
-## Recursion and budget
-
-Default local policy:
+Security remains based on stable semantics:
 
 ```text
-max_depth = 2
-max_agents = 6
+asset
+→ trust boundary
+→ allowed flow
+→ invariant
+→ applicable attack family
+→ isolated evidence
 ```
 
-A lead-worker topology is only useful if a registered configuration can delegate and the host runtime actually exposes that capability.
+The strength of a red-team executor can change without changing the invariant model.
 
-## Storage strategy
+## Observability
+
+`run_agents` is an optional after-the-fact host observation of actual topology. It is not an execution plan.
+
+Missing telemetry is first-class (`not-collected` / `partial` / `complete`) so absence cannot be mistaken for single-agent execution.
+
+Reports are derived from SQLite. Semantic summaries/reports are not canonical memory and may be regenerated.
+
+## Storage
+
+Fresh install:
 
 ```text
-agent-lore.db
-  structured runs
-  knowledge metadata
-  evidence lineage
-  agent configurations
-  routing decisions
-  optional run_agents execution ledger
-  revalidation audit events
-  policy
-
-knowledge/skills/
-  materialized learned Agent Skills
-
-archive/
-  safety backups / future cold artifacts
-
-exports/
-  portable snapshots
+~/.agent-lore/
+└─ agent-lore.db
 ```
 
-Large raw traces remain optional/deferred.
-
-## Phase 5 boundary
-
-Cross-device synchronization is deliberately outside this alpha. The future service can replace local-only storage without changing the conceptual interfaces:
+Lazy derived/operational directories:
 
 ```text
-retrieve
-record outcome
-get capability stats
-recommend route
-consolidate knowledge
+reports/   generated report views
+exports/   default portable export output
+archive/   import safety backups
 ```
+
+Legacy upgraded installations may also contain `knowledge/` from pre-v0.9 learned-Skill materialization. These files remain portable for compatibility but are no longer created.
+
+Empty `traces/` and `knowledge/skills/` placeholder directories are not part of the v0.9 runtime layout.
+
+## Portable boundary
+
+The conceptual durable interfaces are:
+
+```text
+record outcome/evidence
+retrieve optional scoped evidence
+record usage/revalidation/feedback
+get capability statistics
+recommend bounded route
+attach execution telemetry
+generate reports
+export/import structured state
+```
+
+Future storage, retrieval, MCP, or cross-device services may replace local implementations without changing these semantics.
