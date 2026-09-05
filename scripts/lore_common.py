@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Shared schema and utilities for Agent Lore.
 
-Integrated Alpha (Phase 1-4) plus human acceptance/observability and adaptive
-execution/security policy guidance:
-- local persistence and portability
-- evidence lifecycle and learned knowledge
-- task-conditioned agent/model capability observations
-- model, topology, and challenge recommendations
-- verification, acceptance, rework lineage, and module/task timing
+Agent Lore is a cross-project sidecar for engineering evidence, observability,
+and enforceable guardrails. The current model/harness keeps ownership of
+planning and execution; historical knowledge is optional evidence rather than
+an instruction stream.
 
 The CLI intentionally uses only the Python standard library.
 """
@@ -30,11 +27,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-APP_VERSION = "0.8.2-alpha"
-SCHEMA_VERSION = "8"
+APP_VERSION = "0.9.0-alpha"
+SCHEMA_VERSION = "9"
 TOKEN_RE = re.compile(r"[a-zA-Z0-9_+.#-]{2,}")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
-SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+KNOWLEDGE_SCOPES = ("task", "module", "project", "stack", "global")
+MEMORY_MODES = ("off", "guardrail", "rescue", "proactive")
+ROOT_CAUSE_STATUSES = ("unknown", "hypothesis", "established", "disputed")
+SOLUTION_STATUSES = ("candidate", "preferred", "conditional", "fallback", "superseded", "invalid")
 
 DEFAULT_POLICY: dict[str, str] = {
     "policy.mode": "observe",
@@ -44,6 +45,8 @@ DEFAULT_POLICY: dict[str, str] = {
     "policy.max_challenge_level": "3",
     "policy.min_model_confidence": "0.35",
     "policy.active_memory_limit": "2000",
+    "policy.memory_mode": "off",
+    "policy.memory_token_budget": "300",
 }
 
 TOPOLOGIES = ("single", "flat-parallel", "lead-worker", "sequential")
@@ -87,9 +90,9 @@ def paths() -> dict[str, Path]:
     return {
         "home": home,
         "db": home / "agent-lore.db",
+        # Legacy-only path retained so old portable bundles can still be
+        # imported/exported. New Agent Lore state is canonical in SQLite.
         "knowledge": home / "knowledge",
-        "skills": home / "knowledge" / "skills",
-        "traces": home / "traces",
         "archive": home / "archive",
         "exports": home / "exports",
         "reports": home / "reports",
@@ -97,10 +100,23 @@ def paths() -> dict[str, Path]:
 
 
 def ensure_dirs() -> dict[str, Path]:
+    """Create only the runtime root.
+
+    Derived/operational directories are lazy-created by the command that needs
+    them. This keeps a fresh installation to ~/.agent-lore/agent-lore.db rather
+    than advertising empty placeholder capabilities.
+    """
     p = paths()
-    for key in ("home", "knowledge", "skills", "traces", "archive", "exports", "reports"):
-        p[key].mkdir(parents=True, exist_ok=True)
+    p["home"].mkdir(parents=True, exist_ok=True)
     return p
+
+
+def ensure_output_dir(key: str) -> Path:
+    p = ensure_dirs()
+    if key not in ("archive", "exports", "reports"):
+        raise ValueError(f"unsupported lazy output directory: {key}")
+    p[key].mkdir(parents=True, exist_ok=True)
+    return p[key]
 
 
 def emit(payload: Any) -> None:
@@ -109,8 +125,6 @@ def emit(payload: Any) -> None:
     try:
         rendered.encode(encoding)
     except UnicodeEncodeError:
-        # Keep stdout valid JSON on Windows consoles/pipes that still use a
-        # legacy code page. JSON consumers decode the escaped text normally.
         rendered = json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=False)
     print(rendered)
 
@@ -123,6 +137,12 @@ def parse_tags(raw: str | None) -> list[str]:
     if not raw:
         return []
     return sorted({normalize(item) for item in raw.split(",") if normalize(item)})
+
+
+def parse_string_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def bool_int(value: bool | None) -> int | None:
@@ -222,7 +242,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Phase 2 lifecycle / lineage columns.
+    # Knowledge lifecycle / evidence capsule columns.
     ensure_column(conn, "experiences", "kind", "TEXT NOT NULL DEFAULT 'experience'")
     ensure_column(conn, "experiences", "knowledge_name", "TEXT")
     ensure_column(conn, "experiences", "trust", "TEXT NOT NULL DEFAULT 'local-verified'")
@@ -239,8 +259,19 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "experiences", "source_language", "TEXT")
     ensure_column(conn, "experiences", "canonicalizer", "TEXT")
     ensure_column(conn, "experiences", "canonicalized_at", "TEXT")
+    ensure_column(conn, "experiences", "knowledge_scope", "TEXT NOT NULL DEFAULT 'project'")
+    ensure_column(conn, "experiences", "scope_ref", "TEXT")
+    ensure_column(conn, "experiences", "experience_family", "TEXT")
+    ensure_column(conn, "experiences", "observation", "TEXT")
+    ensure_column(conn, "experiences", "invariant", "TEXT")
+    ensure_column(conn, "experiences", "root_cause", "TEXT")
+    ensure_column(conn, "experiences", "root_cause_status", "TEXT NOT NULL DEFAULT 'unknown'")
+    ensure_column(conn, "experiences", "applies_when", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "experiences", "not_proven", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "experiences", "solution_status", "TEXT NOT NULL DEFAULT 'candidate'")
+    ensure_column(conn, "experiences", "summary_version", "INTEGER NOT NULL DEFAULT 1")
 
-    # Phase 3/4 run context.
+    # Run context / acceptance / observability.
     ensure_column(conn, "runs", "quality_score", "REAL")
     ensure_column(conn, "runs", "run_kind", "TEXT NOT NULL DEFAULT 'primary'")
     ensure_column(conn, "runs", "topology", "TEXT")
@@ -249,8 +280,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "runs", "challenge_level", "TEXT")
     ensure_column(conn, "runs", "challenge_useful", "INTEGER")
     ensure_column(conn, "runs", "route_decision_id", "TEXT")
-
-    # Human-observable task context and acceptance lifecycle.
     ensure_column(conn, "runs", "module", "TEXT")
     ensure_column(conn, "runs", "task_subtype", "TEXT")
     ensure_column(conn, "runs", "task_scope", "TEXT")
@@ -278,9 +307,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "runs", "source_language", "TEXT")
     ensure_column(conn, "runs", "canonicalizer", "TEXT")
     ensure_column(conn, "runs", "canonicalized_at", "TEXT")
-    # Optional, host-supplied execution telemetry. not-collected is
-    # intentionally distinct from an empty/single-agent topology: older runs
-    # and hosts that do not expose an execution tree remain valid.
     ensure_column(conn, "runs", "execution_capture_status", "TEXT NOT NULL DEFAULT 'not-collected'")
     ensure_column(conn, "runs", "execution_capture_source", "TEXT")
     ensure_column(conn, "runs", "execution_capture_notes", "TEXT")
@@ -422,6 +448,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "routing_decisions", "delegation_depth", "INTEGER")
     ensure_column(conn, "routing_decisions", "verification_tier", "TEXT")
     ensure_column(conn, "routing_decisions", "security_depth", "TEXT")
+    ensure_column(conn, "routing_decisions", "memory_mode", "TEXT")
 
     conn.executescript(
         """
@@ -429,6 +456,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind);
         CREATE INDEX IF NOT EXISTS idx_experiences_task_type ON experiences(task_type);
         CREATE INDEX IF NOT EXISTS idx_experiences_stack ON experiences(language, framework);
+        CREATE INDEX IF NOT EXISTS idx_experiences_scope ON experiences(knowledge_scope, source_project, module);
+        CREATE INDEX IF NOT EXISTS idx_experiences_family ON experiences(experience_family);
         CREATE INDEX IF NOT EXISTS idx_runs_task_type ON runs(task_type);
         CREATE INDEX IF NOT EXISTS idx_runs_model ON runs(model, harness, agent_role);
         CREATE INDEX IF NOT EXISTS idx_runs_topology ON runs(topology, task_type);
@@ -448,7 +477,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
         """
     )
 
-    # Existing v0.4 runs become explicit single-attempt task groups without inventing acceptance.
     conn.execute("UPDATE runs SET task_group_id = id WHERE task_group_id IS NULL OR task_group_id = ''")
 
     set_meta(conn, "schema_version", SCHEMA_VERSION)
@@ -477,6 +505,8 @@ def policy(conn: sqlite3.Connection) -> dict[str, Any]:
         "max_challenge_level": int(get_meta(conn, "policy.max_challenge_level", "3") or 3),
         "min_model_confidence": float(get_meta(conn, "policy.min_model_confidence", "0.35") or 0.35),
         "active_memory_limit": int(get_meta(conn, "policy.active_memory_limit", "2000") or 2000),
+        "memory_mode": get_meta(conn, "policy.memory_mode", "off") or "off",
+        "memory_token_budget": int(get_meta(conn, "policy.memory_token_budget", "300") or 300),
     }
 
 
@@ -536,6 +566,12 @@ def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[s
         row["failure_reason"],
         row["solution_summary"],
         row["solution_summary_canonical"],
+        row["experience_family"],
+        row["observation"],
+        row["invariant"],
+        row["root_cause"],
+        row["applies_when"],
+        row["not_proven"],
         row["tags"],
     )
     overlaps = [
@@ -576,8 +612,6 @@ def row_score(row: sqlite3.Row, args: argparse.Namespace) -> tuple[float, list[s
     score += 0.8 if row["status"] == "active" else 0.15
     if row["kind"] == "pattern":
         score += 0.25
-    elif row["kind"] == "skill":
-        score += 0.35
     score += max(0.0, min(1.0, float(row["confidence"])))
     score += min(1.5, math.log2(max(1, int(row["evidence_count"]))) * 0.4)
     score += freshness_value(row["last_verified_at"] or row["updated_at"]) * 0.5
