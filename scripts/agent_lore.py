@@ -30,6 +30,20 @@ def add_canonical_task_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--source-language", help="Source language hint, e.g. zh-CN or en")
 
 
+def add_memory_args(parser: argparse.ArgumentParser, default_mode: str | None = None) -> None:
+    parser.add_argument(
+        "--memory-mode",
+        choices=MEMORY_MODES,
+        default=default_mode,
+        help="off=no history, guardrail=failures/invariants only, rescue/proactive=may expose historical solutions",
+    )
+    parser.add_argument(
+        "--memory-token-budget",
+        type=int,
+        help="Approximate maximum historical-memory tokens returned for this request",
+    )
+
+
 def add_routing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--agent-role")
     parser.add_argument("--complexity", choices=["low", "medium", "high"], default="medium")
@@ -48,7 +62,10 @@ def add_routing_args(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-lore",
-        description="Local-first continual learning, acceptance tracking, observability, and adaptive routing for coding agents.",
+        description=(
+            "Cross-project sidecar for engineering evidence, observability, enforceable guardrails, "
+            "and model/harness calibration without replacing current-model judgment."
+        ),
     )
     parser.add_argument("--version", action="version", version=APP_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -56,10 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_init = sub.add_parser("init", help="Initialize or upgrade the local Agent Lore store.")
     p_init.set_defaults(func=cmd_init)
 
-    p_retrieve = sub.add_parser("retrieve", help="Retrieve narrowly scoped reusable engineering knowledge.")
+    p_retrieve = sub.add_parser("retrieve", help="Retrieve narrowly scoped historical engineering evidence.")
     p_retrieve.add_argument("--task", required=True)
     add_context_args(p_retrieve)
     add_canonical_task_args(p_retrieve)
+    add_memory_args(p_retrieve, default_mode="guardrail")
     p_retrieve.add_argument("--limit", type=int, default=5)
     p_retrieve.set_defaults(func=cmd_retrieve)
 
@@ -94,15 +112,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_record.add_argument(
         "--knowledge-id",
         help=(
-            "Explicitly link this run to existing knowledge. This bypasses lesson-text matching, "
-            "but the id must already exist and revalidation eligibility is still checked separately."
+            "Explicitly link this run to existing knowledge. The evidence lineage is updated without rewriting "
+            "the historical interpretation or solution."
         ),
     )
+
+    # Evidence capsule. `--lesson` remains for backward compatibility and a
+    # concise human-readable card, but new integrations should prefer the
+    # structured fields below.
     p_record.add_argument("--lesson")
-    p_record.add_argument("--lesson-canonical", help="Optional English/canonical lesson supplied by the host")
+    p_record.add_argument("--lesson-canonical", help="Optional English/canonical compact card supplied by the host")
+    p_record.add_argument("--knowledge-scope", choices=KNOWLEDGE_SCOPES, default="project")
+    p_record.add_argument("--scope-ref", help="Optional explicit scope identity; inferred when omitted")
+    p_record.add_argument("--experience-family", help="Stable failure/problem family, e.g. auth-refresh-race")
+    p_record.add_argument("--observation", help="What was actually observed")
+    p_record.add_argument("--invariant", help="Condition that should remain true independent of implementation")
+    p_record.add_argument("--root-cause", help="Root-cause statement; pair with --root-cause-status")
+    p_record.add_argument("--root-cause-status", choices=ROOT_CAUSE_STATUSES, default="unknown")
+    p_record.add_argument("--applies-when", help="Comma-separated applicability signals")
+    p_record.add_argument("--not-proven", help="Comma-separated claims this evidence does not establish")
     p_record.add_argument("--failure-reason")
-    p_record.add_argument("--solution")
-    p_record.add_argument("--solution-canonical", help="Optional English/canonical procedure supplied by the host")
+    p_record.add_argument("--solution", help="Historical remedy/solution variant; not a future instruction")
+    p_record.add_argument("--solution-status", choices=SOLUTION_STATUSES, default="candidate")
+    p_record.add_argument("--solution-canonical", help="Optional English/canonical historical remedy supplied by host")
     p_record.add_argument("--canonicalizer", help="Translation/canonicalization model or process identifier")
     p_record.add_argument("--confidence", type=float, default=0.5)
     p_record.add_argument("--quality-score", type=float)
@@ -153,20 +185,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_revalidate.add_argument("--source", choices=FEEDBACK_SOURCES, default="reviewer")
     p_revalidate.set_defaults(func=cmd_revalidate)
 
-    p_consolidate = sub.add_parser("consolidate", help="Score lifecycle utility and conservatively promote/archive knowledge.")
+    p_consolidate = sub.add_parser("consolidate", help="Score lifecycle utility and conservatively promote/archive evidence.")
     p_consolidate.add_argument("--apply", action="store_true", help="Apply safe lifecycle changes; otherwise preview.")
     p_consolidate.set_defaults(func=cmd_consolidate)
 
-    p_knowledge = sub.add_parser("knowledge", help="List learned knowledge and acceptance metrics.")
+    p_knowledge = sub.add_parser("knowledge", help="List learned evidence/patterns and acceptance metrics.")
     p_knowledge.add_argument("--status", choices=["candidate", "active", "deprecated", "archived"])
-    p_knowledge.add_argument("--kind", choices=["experience", "pattern", "skill", "eval"])
+    p_knowledge.add_argument("--kind", choices=["experience", "pattern", "eval", "skill"], help="skill is legacy read-only")
+    p_knowledge.add_argument("--scope", choices=KNOWLEDGE_SCOPES)
     p_knowledge.add_argument("--type")
     p_knowledge.add_argument("--limit", type=int, default=100)
     p_knowledge.set_defaults(func=cmd_knowledge)
 
-    p_promote = sub.add_parser("promote", help="Explicitly promote accepted/verified knowledge into a pattern, skill, or eval case.")
+    p_promote = sub.add_parser("promote", help="Explicitly promote accepted/verified evidence into a pattern or eval case.")
     p_promote.add_argument("id")
-    p_promote.add_argument("--kind", required=True, choices=["pattern", "skill", "eval"])
+    p_promote.add_argument("--kind", required=True, choices=["pattern", "eval"])
     p_promote.add_argument("--name")
     p_promote.add_argument("--reason")
     p_promote.set_defaults(func=cmd_promote)
@@ -181,9 +214,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_archive.add_argument("id")
     p_archive.add_argument("--reason", required=True)
     p_archive.set_defaults(func=cmd_archive)
-
-    p_materialize = sub.add_parser("materialize-skills", help="Write accepted active learned skills as Agent Skills directories.")
-    p_materialize.set_defaults(func=cmd_materialize)
 
     p_config = sub.add_parser("config", help="Manage task-routable model/agent configurations.")
     config_sub = p_config.add_subparsers(dest="config_command", required=True)
@@ -207,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_config_disable.add_argument("name")
     p_config_disable.set_defaults(func=cmd_config_disable)
 
-    p_policy = sub.add_parser("policy", help="Inspect or change adaptive-routing guardrails.")
+    p_policy = sub.add_parser("policy", help="Inspect or change adaptive guardrails and default memory budget.")
     policy_sub = p_policy.add_subparsers(dest="policy_command", required=True)
     p_policy_show = policy_sub.add_parser("show")
     p_policy_show.set_defaults(func=cmd_policy_show)
@@ -219,13 +249,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_policy_set.add_argument("--max-challenge-level", type=int, choices=range(0, 4))
     p_policy_set.add_argument("--min-model-confidence", type=float)
     p_policy_set.add_argument("--active-memory-limit", type=int)
+    p_policy_set.add_argument("--memory-mode", choices=MEMORY_MODES)
+    p_policy_set.add_argument("--memory-token-budget", type=int)
     p_policy_set.set_defaults(func=cmd_policy_set)
 
-    p_recommend = sub.add_parser("recommend", help="Recommend knowledge, topology, agent config, and challenge level for a task.")
+    p_recommend = sub.add_parser("recommend", help="Recommend topology/config/challenge; historical memory is off unless requested.")
     p_recommend.add_argument("--task", required=True)
     add_context_args(p_recommend)
     add_canonical_task_args(p_recommend)
     add_routing_args(p_recommend)
+    add_memory_args(p_recommend, default_mode=None)
     p_recommend.add_argument("--task-shape-json", help="Machine-readable TaskShape JSON, or @path to a JSON file")
     p_recommend.add_argument("--evidence-plan-json", help="Machine-readable EvidencePlan JSON, or @path to a JSON file")
     p_recommend.add_argument("--mode", choices=["observe", "assist", "adaptive"])
@@ -292,7 +325,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         "retries", "latency_ms", "wall_time_ms", "compute_time_ms", "verification_time_ms",
         "review_time_ms", "coordination_time_ms", "files_touched", "lines_changed", "modules_touched",
         "test_count", "agent_count", "merge_conflicts", "estimated_subtasks", "max_depth", "max_agents",
-        "active_memory_limit",
+        "active_memory_limit", "memory_token_budget",
     ):
         if hasattr(args, name):
             value = getattr(args, name)
