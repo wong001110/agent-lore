@@ -1,6 +1,8 @@
 # Knowledge lifecycle and bias controls
 
-Agent Lore should learn selectively. A larger memory database is not automatically better.
+Agent Lore should learn selectively. More historical memory is not automatically better.
+
+Historical knowledge exists to preserve **evidence, failure space, invariants, applicability, and solution variants** without turning old agents' interpretations into instructions for future models.
 
 ## Lifecycle
 
@@ -8,30 +10,29 @@ Agent Lore should learn selectively. A larger memory database is not automatical
 run attempt
   -> execution outcome
   -> verification
-  -> acceptance / rework
-  -> reusable lesson?
-       ├─ no -> statistics only
+  -> acceptance / rework / rejection
+  -> reusable evidence?
+       ├─ no -> run/statistics only
        └─ yes
-            -> candidate experience
+            -> scoped candidate experience
             -> accepted/verified evidence
-            -> active experience
-            -> pattern
-            -> explicit skill/eval promotion when justified
+            -> active experience when justified
+            -> reusable pattern when justified
 ```
 
-At any point, knowledge may require revalidation, be deprecated, or be archived.
+There is no learned-Skill terminal stage in v0.9.
+
+At any point, historical knowledge may require revalidation, be deprecated, be superseded, or be archived without deleting its evidence lineage.
 
 ## Acceptance matters
 
-Execution success is not final delivery success. A passing implementation that the user/reviewer sends back for rework is negative learning evidence for first-pass quality.
+Execution success is not final delivery success.
 
-Automatic promotion therefore relies on linked verified/accepted outcomes rather than raw `outcome=success` counts.
+A passing implementation sent back for rework is negative evidence for first-pass quality. Promotion therefore depends on linked accepted+verified evidence rather than raw `outcome=success` counts.
 
-## Knowledge scope
+## First-class knowledge scope
 
-Not every lesson should become global.
-
-Conceptual scopes:
+v0.9 persists:
 
 ```text
 task
@@ -41,29 +42,82 @@ stack
 global
 ```
 
-Examples:
+Typical meaning:
 
-- a one-off recovery fact: `task`
-- a module-specific migration convention: `module`
-- a repository workflow/architecture convention: `project`
-- a repeatable Prisma/Next.js lesson: `stack`
-- a broadly transferred engineering invariant: `global`
+- `task` — one narrow task family/subtype in one project
+- `module` — reusable only inside a project module/subsystem
+- `project` — repository-specific historical evidence/convention
+- `stack` — deliberately transferable language/framework evidence
+- `global` — explicitly generalized evidence with broad applicability
 
-Project-local knowledge may become useful without cross-project evidence. Cross-project diversity is increasingly important as a lesson is generalized toward stack/global scope.
+Project/module evidence can become useful locally without proving cross-project transfer. Stronger transfer evidence is required as knowledge moves toward `stack`/`global` scope.
 
-The current runtime does not yet persist knowledge scope as a first-class field; this is policy for future schema work.
+Scope constrains retrieval; it does not create authority.
 
-## Project state is not Agent Lore knowledge
+## Evidence Capsule over eternal lesson
 
-Do not store project wiki/current-state snapshots in Agent Lore. Current feature status, milestones, architecture state, and project progress belong to the project-local wiki/docs.
+Prefer structured fields:
 
-Agent Lore stores reusable engineering evidence and outcome history, not a duplicate project knowledge base.
+```text
+experience_family
+observation
+invariant
+root_cause + root_cause_status
+applies_when
+not_proven
+historical solution + solution_status
+scope + scope_ref
+accepted/verified evidence lineage
+```
 
-## Conservative maintenance
+Legacy `lesson` / `solution_summary` remain for compatibility and compact human-readable context, but a free-form lesson should not be treated as an eternal instruction.
 
-`consolidate` uses acceptance, verification, project diversity, reuse, freshness, and utility to make conservative lifecycle suggestions.
+### Different lifetimes
 
-Do not automatically turn everything into a Skill, and do not silently delete disputed evidence.
+```text
+verified observation/failure  -> long-lived historical evidence
+invariant/insight             -> long-lived but revisable
+a historical solution         -> contextual, replaceable variant
+```
+
+A future model may supersede a historical solution while the old failure evidence remains valid.
+
+Solution status:
+
+```text
+candidate | preferred | conditional | fallback | superseded | invalid
+```
+
+`preferred` means current evidence favors it; it does not mean future models must use it.
+
+## Experience families
+
+Where useful, connect multiple solution variants through one stable problem/failure family rather than collapsing them into a single answer.
+
+Example:
+
+```text
+AUTH-REFRESH-RACE
+├─ lock                    accepted in context A
+├─ optimistic concurrency  accepted in context B
+└─ versioned token         accepted in context C
+```
+
+The durable knowledge is the failure/invariant/applicability space. Procedures remain alternatives.
+
+## Project state is separate
+
+Do not store project wiki/current-state snapshots in Agent Lore.
+
+Current feature state, roadmap, architecture truth, milestones, and project progress remain project-owned. Agent Lore stores cross-project-compatible execution evidence and scoped historical cases, not a duplicate project knowledge base.
+
+## Conservative consolidation
+
+`consolidate` uses acceptance, verification, scope, project diversity where relevant, reuse, freshness, and negative feedback.
+
+Do not silently generalize a project-local observation to stack/global evidence.
+
+Do not silently delete disputed evidence.
 
 ## Negative feedback and revalidation
 
@@ -74,52 +128,95 @@ contradictory linked evidence
         ↓
 needs_revalidation
         ↓
-lower trust/ranking and no automatic promotion
+down-rank / withhold promotion
 ```
 
-Preserve the historical case because it may explain context boundaries or recurring failure modes.
+Preserve the old case because it may explain failure modes, context boundaries, or why one solution stopped working.
 
-Clear a revalidation hold only through the formal revalidate command and a linked run that is successful, verified, and accepted. The audit event records who/what supplied the decision and why. Revalidation restores eligibility for retrieval/promotion; it does not silently reactivate deprecated or archived knowledge.
+Clear a hold only with the explicit revalidation operation and a linked run that is successful, verified, and accepted. Revalidation restores eligibility; it does not reactivate deprecated/archived knowledge or rewrite the old record.
 
-## Bilingual canonical memory
+## Supersession is not deletion
 
-Preserve original-language task, lesson, and procedure text. A host may attach an English canonical representation for cross-language retrieval, together with source language and canonicalizer provenance.
+When a newer solution/pattern replaces an older one, preserve the old evidence and use explicit status/supersession metadata. Old cases may still apply in legacy contexts.
 
-Translation/canonicalization belongs to the host boundary. Agent Lore performs no hidden network call. If canonical text is absent, native Unicode/CJK retrieval remains available. Never translate secrets merely to improve retrieval.
+Do not infer:
 
-## Skill promotion
+```text
+newer == universally better
+older == useless
+```
 
-A Skill is a stronger procedural artifact. Promote it only when there is a useful procedure with accepted/verified evidence. Materialized Skills remain advisory unless a separate hard policy explicitly says otherwise.
+Current applicability and deterministic evidence decide.
 
-## Rework lineage
+## Bilingual/canonical representations
 
-Attempts on the same logical task should preserve lineage so first-pass acceptance, rework count, accumulated time, and cost-to-accepted-result remain measurable.
+Preserve original-language evidence. A host may attach an English/canonical representation for cross-language retrieval with provenance.
 
-## Retrieval budget
+Canonicalization is derived data, not a replacement for original evidence. Agent Lore makes no hidden network translation calls.
 
-Planning retrieval should normally stay small (roughly 3-5 items). Retrieve again when task state materially changes rather than allowing stored-record count to determine context size.
+## Learned Skills are legacy read-only
+
+v0.9 stops new historical `skill` promotion and stops `materialize-skills` output.
+
+Reason: generated Agent Skills are instruction-shaped artifacts and therefore have a higher risk of anchoring future models to old procedures.
+
+Existing old `kind=skill` rows/files remain readable and portable for backward compatibility, but:
+
+- they are excluded from normal retrieval
+- no new skill may be promoted
+- no new learned Skill file is materialized
+
+Experience/Pattern evidence is sufficient for continual learning.
+
+## Retrieval and memory modes
+
+Historical memory is pull-based:
+
+```text
+off
+guardrail
+rescue
+proactive
+```
+
+See `MEMORY.md`.
+
+`guardrail` should generally expose observations/failures/invariants without exposing the old procedure. `rescue`/`proactive` may reveal historical remedies when deliberately useful.
+
+Use an approximate token budget in addition to item-count caps. Large context windows do not justify large memory payloads automatically.
+
+## No summary-of-summary accumulation
+
+Structured run/evidence state is canonical.
+
+Cards, reports, translations, and semantic summaries are derived views that should be regenerable from source evidence. Avoid recursively summarizing older model summaries as the only remaining truth.
 
 ## Security learning
 
-Security incidents and near-misses require stricter promotion:
+Security incidents/near-misses use a stricter path:
 
 ```text
 incident/finding
-  -> established root cause
+  -> established root cause when possible
   -> attack/failure primitive
   -> invariant
-  -> regression candidate
-  -> deterministic reproduction
-  -> reusable pattern/eval if validated
+  -> deterministic regression candidate
+  -> accepted/verified pattern/eval when justified
 ```
 
-Do not turn a repository/web claim into a global security rule merely because an LLM says it sounds plausible.
+Do not convert an LLM claim or internet/repository text into a global security policy because it sounds plausible.
 
-## Policy strength of learned knowledge
+## Experience and policy are separate
 
-Learned knowledge normally begins as `experimental` or `advisory`. Repeated accepted evidence may justify stronger defaults, but learning does not automatically create hard constraints.
+Historical evidence normally remains auxiliary.
 
-Hard security/permission invariants require independent justification, not popularity in historical runs.
+There is no automatic:
+
+```text
+many successes -> strong-default/hard policy
+```
+
+Hard permission/security boundaries require independent justification. See `POLICY.md` and `SIDECAR.md`.
 
 ## Bias and failure modes
 
@@ -127,36 +224,35 @@ Actively guard against:
 
 - anchoring and confirmation bias
 - negative transfer and staleness
-- survivorship/acceptance/recency bias
+- survivorship / acceptance / recency bias
 - correlated evidence and self-reinforcement
-- authority bias (`active`/`skill` is not mandatory)
-- project dominance
+- authority bias (`active`/`pattern` is not mandatory)
+- project dominance and scope leakage
 - retrieval/context interference
 - router path dependence
 - reviewer herding/self-preference
 - metric gaming / Goodhart effects
 - untrusted-source contamination
+- inherited preferences from weaker/older models
 
-Form a current-model plan before retrieval for meaningful choices. For high-impact decisions, inspect disconfirming evidence.
+For meaningful design choices, form a current-model plan from current project evidence before revealing historical solutions when practical.
 
 ## Counterfactual discipline
 
-Do not conclude that one model/topology/verification strategy is better from raw historical success rates alone. Consider task complexity, risk, model/harness, novelty, scope, verification depth, and other confounders.
+Do not conclude that one model/topology/memory/verification strategy is better from raw historical success alone.
 
-Use natural matched history, shadow evaluation, occasional exploration, rework comparisons, and explicit benchmark/eval tasks when useful. `Insufficient evidence` is a valid result.
+Consider task, model, harness, project/scope, novelty, verification depth, failure cost, memory mode, and other confounders.
 
-## Challenge and verification ROI
-
-Challenge, tests, attacks, and multi-agent execution should be measured for useful lift rather than ritual frequency. A low observed ROI may reduce optional frequency, but required hard invariants remain required.
+Use matched history, shadow evaluation, occasional safe exploration, rework comparisons, and explicit eval tasks. `Insufficient evidence` is valid.
 
 ## Memory Lift
 
-Long-term objective:
+Conceptually:
 
 ```text
 Memory Lift = performance(memory-assisted) - model-only baseline
 ```
 
-For real product work, prefer acceptance-aware measures such as first-pass acceptance, rework, time/cost to accepted result, and verification quality.
+Prefer acceptance-aware outcomes: first-pass acceptance, rework, deterministic verification quality, time/cost to accepted result, and failure/incident escape rate.
 
-Negative Memory Lift means the knowledge/retrieval policy should be narrowed, revalidated, or disabled rather than trusted because it exists.
+A new model must not automatically inherit an older model's memory preference. Negative or negligible Memory Lift should narrow or disable memory for that model/task context.
