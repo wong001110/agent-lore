@@ -38,13 +38,8 @@ def build_stats_query(args: argparse.Namespace) -> tuple[str, list[Any]]:
             ROUND(AVG(CASE WHEN verification_status IN ('passed','not-required') THEN 1.0 ELSE 0.0 END) * 100.0, 1) AS verification_pass_rate_pct,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required') THEN 1 ELSE 0 END) AS accepted,
             SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') THEN 1 ELSE 0 END) AS acceptance_observed,
-            SUM(CASE
-                WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1
-                THEN 1 ELSE 0 END) AS first_pass_accepted,
-            SUM(CASE
-                WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated')
-                 AND attempt_index=1
-                THEN 1 ELSE 0 END) AS first_pass_observed,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required') AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_accepted,
+            SUM(CASE WHEN acceptance_status IN ('accepted','not-required','rework','rejected','invalidated') AND attempt_index=1 THEN 1 ELSE 0 END) AS first_pass_observed,
             SUM(CASE WHEN acceptance_status='rework' THEN 1 ELSE 0 END) AS reworks,
             ROUND(AVG(quality_score), 3) AS avg_quality,
             ROUND(AVG(cost_usd), 6) AS avg_cost_usd,
@@ -78,8 +73,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
             item["acceptance_rate_pct"] = round(accepted / observed * 100.0, 1) if observed else None
             item["first_pass_acceptance_rate_pct"] = (
                 round(int(row["first_pass_accepted"] or 0) / first_pass_observed * 100.0, 1)
-                if first_pass_observed
-                else None
+                if first_pass_observed else None
             )
             groups.append(item)
         routing = conn.execute(
@@ -114,12 +108,14 @@ def cmd_export(args: argparse.Namespace) -> int:
     with connect():
         pass
     default_name = f"agent-lore-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
-    output = Path(args.output).expanduser().resolve() if args.output else p["exports"] / default_name
+    if args.output:
+        output = Path(args.output).expanduser().resolve()
+    else:
+        output = ensure_output_dir("exports") / default_name
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="agent-lore-export-") as tmp:
-        tmp_dir = Path(tmp)
-        snapshot = tmp_dir / "agent-lore.db"
+        snapshot = Path(tmp) / "agent-lore.db"
         safe_backup_database(p["db"], snapshot)
         manifest = {
             "format": "agent-lore-portable",
@@ -127,10 +123,13 @@ def cmd_export(args: argparse.Namespace) -> int:
             "schema_version": SCHEMA_VERSION,
             "exported_at": utc_now(),
             "database": "agent-lore.db",
+            "legacy_knowledge_files": p["knowledge"].exists(),
         }
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(snapshot, "agent-lore.db")
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            # v0.9 no longer creates learned-skill files. Preserve any existing
+            # legacy knowledge files so old installations remain portable.
             if p["knowledge"].exists():
                 for file in p["knowledge"].rglob("*"):
                     if file.is_file():
@@ -155,6 +154,7 @@ def validate_snapshot(path: Path) -> None:
 
 
 def portable_knowledge_path(name: str) -> Path | None:
+    """Accept legacy `knowledge/` entries without making them a v0.9 runtime dependency."""
     normalized = name.replace("\\", "/")
     path = PurePosixPath(normalized)
     if not path.parts or path.parts[0] != "knowledge" or normalized.endswith("/"):
@@ -171,7 +171,7 @@ def portable_knowledge_path(name: str) -> Path | None:
 
 def backup_import_state(p: dict[str, Path]) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    backup_dir = p["archive"] / f"pre-import-{stamp}"
+    backup_dir = ensure_output_dir("archive") / f"pre-import-{stamp}"
     backup_dir.mkdir(parents=True, exist_ok=False)
     if p["db"].exists():
         safe_backup_database(p["db"], backup_dir / "agent-lore.db")
@@ -198,6 +198,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         snapshot = tmp_dir / "agent-lore.db"
         staged_knowledge = tmp_dir / "knowledge"
         staged_knowledge.mkdir()
+        has_legacy_knowledge = False
 
         with zipfile.ZipFile(bundle, "r") as zf:
             names = set(zf.namelist())
@@ -207,7 +208,6 @@ def cmd_import(args: argparse.Namespace) -> int:
             if manifest.get("format") != "agent-lore-portable":
                 raise ValueError("Unsupported export format.")
 
-            snapshot = Path(tmp) / "agent-lore.db"
             snapshot.write_bytes(zf.read("agent-lore.db"))
             validate_snapshot(snapshot)
 
@@ -215,6 +215,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                 relative = portable_knowledge_path(name)
                 if relative is None:
                     continue
+                has_legacy_knowledge = True
                 target = staged_knowledge / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(zf.read(name))
@@ -225,10 +226,12 @@ def cmd_import(args: argparse.Namespace) -> int:
         shutil.copy2(snapshot, pending_database)
 
         try:
-            os.replace(p["knowledge"], rollback_knowledge)
-            knowledge_moved = True
-            os.replace(staged_knowledge, p["knowledge"])
-            knowledge_installed = True
+            if p["knowledge"].exists():
+                os.replace(p["knowledge"], rollback_knowledge)
+                knowledge_moved = True
+            if has_legacy_knowledge:
+                os.replace(staged_knowledge, p["knowledge"])
+                knowledge_installed = True
             os.replace(pending_database, p["db"])
             database_replaced = True
             with connect():
@@ -250,7 +253,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                     p["db"].unlink()
             raise
         else:
-            if rollback_knowledge.exists():
+            if rollback_knowledge and rollback_knowledge.exists():
                 shutil.rmtree(rollback_knowledge)
 
     emit(
@@ -259,6 +262,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             "bundle": str(bundle),
             "database": str(p["db"]),
             "safety_backup": str(safety_backup) if safety_backup else None,
+            "legacy_knowledge_imported": has_legacy_knowledge,
         }
     )
     return 0
@@ -273,7 +277,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         active = conn.execute("SELECT COUNT(*) FROM experiences WHERE status='active'").fetchone()[0]
         candidates = conn.execute("SELECT COUNT(*) FROM experiences WHERE status='candidate'").fetchone()[0]
         patterns = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='pattern' AND status='active'").fetchone()[0]
-        skills = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='skill' AND status='active'").fetchone()[0]
+        legacy_skills = conn.execute("SELECT COUNT(*) FROM experiences WHERE kind='skill'").fetchone()[0]
         revalidation = conn.execute("SELECT COUNT(*) FROM experiences WHERE needs_revalidation=1").fetchone()[0]
         revalidation_events = conn.execute("SELECT COUNT(*) FROM knowledge_revalidations").fetchone()[0]
         configs = conn.execute("SELECT COUNT(*) FROM agent_configs WHERE enabled=1").fetchone()[0]
@@ -282,12 +286,8 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         accepted = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status IN ('accepted','not-required')").fetchone()[0]
         reworks = conn.execute("SELECT COUNT(*) FROM runs WHERE acceptance_status='rework'").fetchone()[0]
         agent_ledger_entries = conn.execute("SELECT COUNT(*) FROM run_agents").fetchone()[0]
-        complete_agent_capture = conn.execute(
-            "SELECT COUNT(*) FROM runs WHERE execution_capture_status='complete'"
-        ).fetchone()[0]
-        partial_agent_capture = conn.execute(
-            "SELECT COUNT(*) FROM runs WHERE execution_capture_status='partial'"
-        ).fetchone()[0]
+        complete_agent_capture = conn.execute("SELECT COUNT(*) FROM runs WHERE execution_capture_status='complete'").fetchone()[0]
+        partial_agent_capture = conn.execute("SELECT COUNT(*) FROM runs WHERE execution_capture_status='partial'").fetchone()[0]
         missing_agent_capture = conn.execute(
             "SELECT COUNT(*) FROM runs WHERE execution_capture_status='not-collected' OR execution_capture_status IS NULL"
         ).fetchone()[0]
@@ -305,7 +305,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             "active": active,
             "candidates": candidates,
             "patterns": patterns,
-            "skills": skills,
+            "legacy_skills": legacy_skills,
+            # Backward-compatible field: no new skills can be created.
+            "skills": legacy_skills,
             "needs_revalidation": revalidation,
             "revalidation_events": revalidation_events,
             "accepted_runs": accepted,
@@ -317,6 +319,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             "agent_capture_not_collected": missing_agent_capture,
             "enabled_agent_configs": configs,
             "routing_decisions": decisions,
+            "runtime_directories": {
+                key: str(path) for key, path in p.items() if key not in ("home", "db") and path.exists()
+            },
             "policy": current_policy,
         }
     )
