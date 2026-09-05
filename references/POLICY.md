@@ -1,176 +1,178 @@
-# Policy strength and model freedom
+# Policy strength, capability guardrails, and model freedom
 
-Agent Lore should improve model judgment, not replace it with a growing rulebook.
+Agent Lore should improve engineering reliability without becoming a growing prompt-level rulebook.
 
-## Core principle
+Core architecture:
 
 ```text
-hard constraints
+independently justified hard capability boundaries
 + strong defaults
-+ contextual evidence
-+ advisory hints
++ current project truth
++ deterministic evidence
++ optional historical evidence
         ↓
 current model reasons and decides
 ```
 
-The host model should remain free to choose a better plan when current repository evidence justifies it. Only explicit hard constraints are non-overridable.
+See `SIDECAR.md` for the cognitive/control/evidence-plane boundary and `MEMORY.md` for historical retrieval.
 
-## Policy strength
+## Constrain capability, not cognition
 
-Every meaningful policy belongs to one of four strengths.
+A hard rule should normally describe **what authority is allowed**, not how a model must think.
+
+Prefer deterministic host/harness/tool enforcement for boundaries such as:
+
+- credential and tenant scope
+- filesystem/write scope
+- network/origin scope
+- production/destructive actions
+- explicit approval requirements
+- sandbox boundaries
+- hard cost/agent/depth/resource ceilings
+
+If the harness can block an unauthorized action directly, do not rely only on repeatedly reminding the model in prompt context.
+
+## Policy strengths
 
 ### `hard`
 
-Safety, permission, budget, or irreversible-action boundary.
+Safety, permission, budget, or irreversible-action boundary that cannot be overridden in normal execution.
 
 Examples:
 
-- do not send credentials to an unauthorized origin
-- do not cross an explicit tenant/authorization boundary
-- do not exceed a configured hard agent/depth/cost ceiling
-- do not bypass a required human approval for a destructive action
-- do not write outside an explicitly restricted write scope
+- credentials may not be sent to an unauthorized origin
+- explicit tenant isolation may not be bypassed
+- destructive production action requires the configured approval
+- configured hard agent/depth/cost ceilings may not be exceeded
 
-A model cannot override a hard rule merely because it believes an exception would be convenient.
+Hard rules require independent justification. They are not learned because old runs happened to succeed with them.
 
 ### `strong-default`
 
-The normal choice supported by engineering economics or repeated evidence, but overridable with a concrete current-task reason.
+Normally useful engineering choice that the current model may override with concrete current-task evidence.
 
 Examples:
 
-- prefer one agent when delegation gain is unclear
+- prefer one agent when delegation benefit is unclear
 - serialize overlapping mutable write scopes
-- use focused security verification for a meaningful auth/credential boundary change
-- batch related small edits before semantic commit
-
-When overriding a strong default, preserve a concise reason in execution evidence when practical. This is for learning, not bureaucracy.
+- use focused security verification for meaningful auth/credential boundary changes
+- batch related edits into coherent semantic commits
 
 ### `advisory`
 
-Useful suggestion with no presumption that it is correct for the current task.
+Useful suggestion with no presumption that it is correct now.
 
 Examples:
 
-- consider parallel execution for independent workstreams
-- consider a verifier or challenger
-- consider focused mutation for an important guard
-
-The model may follow or ignore advisory guidance without special approval.
+- consider parallelism for disjoint workstreams
+- consider a verifier/challenger
+- consider focused mutation around a critical guard
 
 ### `experimental`
 
-Weak or under-sampled evidence, exploration result, newly learned pattern, or uncertain recommendation.
+Weak, under-sampled, newly observed, or uncertain hypothesis.
 
-Treat it as a hypothesis. It must not silently become a strong default or hard rule.
+## No automatic Experience -> Policy promotion
 
-## Override semantics
+Historical memory has a separate lifecycle from policy.
+
+A repeated successful procedure may become a scoped pattern, but it must not silently become a `strong-default` or `hard` rule.
+
+To strengthen policy, require an explicit independent reason such as:
+
+- safety/permission boundary
+- protocol/contract requirement
+- deterministic evidence across applicable contexts
+- explicit project/owner decision
+
+Popularity in old runs is not sufficient.
+
+## Avoid brittle recipes
+
+Do not encode rules such as:
 
 ```text
-hard            -> cannot override within normal execution
-strong-default  -> may override with current evidence/reason
-advisory         -> freely adaptable
-experimental     -> weak evidence only
-```
-
-Do not require explanation for every local decision. Require explicit reasoning mainly when a model chooses a materially riskier path than a strong default.
-
-## Model freedom
-
-Do not encode policy as brittle thresholds such as:
-
-```text
-files > 10 -> run E2E
+files > 10 -> E2E
 subtasks >= 3 -> multi-agent
 risk=high -> always red-team
 5 edits -> commit
+old solution succeeded -> use it again
 ```
 
-Use categories such as verification tier, security depth, delegation gain, and attack budget as reasoning language rather than fixed recipes.
+Use reasoning vocabulary such as impact, delegation gain, residual risk, evidence sufficiency, security depth, and attack applicability.
 
-A model may escalate a tiny change because it touches a critical authorization boundary, or reduce verification for a large generated/isolated change when evidence supports that decision.
+## Evidence plans, not test rituals
 
-## Evidence plans, not test recipes
-
-The verification planner should answer:
+Verification planning should answer:
 
 ```text
-What claims must be proven?
-What is the cheapest useful evidence?
-What would make us escalate?
+What claims/invariants must be true?
+What is the cheapest high-information evidence?
+What would trigger escalation?
 When is evidence sufficient to stop?
 ```
 
-V0-V4 are risk/depth signals, not mandatory checklists.
+V0-V4 remain depth/risk signals, not mandatory checklists.
 
 ## Human escalation boundary
 
-The Main/Orchestrator normally decides without asking the user:
+Main/Orchestrator normally handles routine decisions including:
 
 - single vs multi-agent
-- parallel vs serial/hybrid scheduling
+- serial/parallel/hybrid scheduling
 - child delegation and routine phase transitions
 - verification/security depth
+- retry/replan/collapse
 - challenger/model selection
-- retry/replan/collapse decisions
 - semantic commit timing
 
-Escalate when owner-level judgment is genuinely required, such as:
+Escalate owner-level decisions such as:
 
-- irreversible production/destructive action
-- high-blast-radius migration without a safe established path
-- lowering a security/privacy protection to proceed
-- materially expanding credential/permission scope
+- irreversible/destructive production action
+- lowering security/privacy protection
+- materially expanding permissions/credentials
 - major product ambiguity with multiple defensible outcomes
-- significant long-term infrastructure/cost obligation
+- durable high-cost architecture/infrastructure commitments
 - legal/compliance ambiguity
-- major architecture alternatives with durable consequences and insufficient evidence
+- high-blast-radius migration without a safe established path
 
 ## Automation boundary
 
-Agent Lore is a **policy + learning + decision-intelligence layer**, not a universal coding runtime.
+Agent Lore is not a universal coding runtime.
 
-The host harness remains responsible for:
+Host harness remains responsible for:
 
-- spawning agents
-- filesystem/process/tool execution
+- model/tool invocation
+- spawning/delegation
+- filesystem/process execution
 - sandboxing
-- tests and Git operations
-- provider calls
+- Git/tests/provider calls
+- enforcing capability boundaries it can enforce deterministically
 
-Agent Lore accepts machine-readable host-supplied TaskShape/EvidencePlan data and produces routing, budget, and DAG-wave guidance. Repository-derived planning and actual execution remain host responsibilities so Agent Lore stays harness-independent.
+Agent Lore may validate host-supplied TaskShape/EvidencePlan structures, record after-the-fact topology/telemetry, maintain budgets/policy, and provide bounded advisory evidence.
 
 ## Counterfactual discipline
 
-Do not conclude that a topology, model, or verification strategy is superior from raw success rates alone.
+Do not infer that a topology/model/memory strategy is better from raw success rate alone.
 
-Consider confounders such as:
+Consider:
 
 - task complexity/risk
-- model and harness
-- domain/scope
+- project/module/domain
+- model + harness
 - novelty
 - verification depth
 - failure cost
+- memory mode and historical context supplied
 
-Use natural matched history, shadow evaluation, occasional exploration, rework comparisons, and benchmark/eval tasks where useful. `Insufficient evidence` is a valid conclusion.
+Use matched history, shadow evaluation, exploration where safe, rework comparison, and explicit eval tasks. `Insufficient evidence` is valid.
 
 ## Knowledge scope
 
-Not every lesson should become global.
-
-Conceptual scopes:
+Historical evidence uses first-class scope:
 
 ```text
-task
-module
-project
-stack
-global
+task | module | project | stack | global
 ```
 
-A project-local convention can become useful project knowledge without cross-project evidence. Cross-project diversity matters when promoting a lesson to stack/global guidance.
-
-Security invariants may be broader when independently justified, but implementation techniques remain scoped to the environments that support them.
-
-The current runtime does not yet persist this scope as a first-class schema field; treat it as policy for future data-model work.
+Scope controls retrieval applicability; it does not grant authority. A project convention remains project-local unless deliberately generalized with adequate evidence.
