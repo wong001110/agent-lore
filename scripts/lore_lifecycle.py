@@ -1,4 +1,4 @@
-"""Knowledge lifecycle and learned-skill materialization."""
+"""Knowledge lifecycle for scoped evidence and reusable patterns."""
 
 from lore_common import *  # noqa: F401,F403
 from lore_memory import *  # noqa: F401,F403
@@ -92,7 +92,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     actions: list[dict[str, Any]] = []
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM experiences WHERE status IN ('candidate', 'active') ORDER BY updated_at DESC"
+            "SELECT * FROM experiences WHERE status IN ('candidate', 'active') AND kind IN ('experience','pattern') ORDER BY updated_at DESC"
         ).fetchall()
         for row in rows:
             metrics = lifecycle_metrics(conn, row)
@@ -101,10 +101,14 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             proposed_kind = row["kind"]
             proposed_status = row["status"]
 
+            # Project/module evidence may become active locally without proving
+            # cross-project transfer. Broader scopes require broader evidence.
+            scope = row["knowledge_scope"] or "project"
+            required_projects = 1 if scope in ("task", "module", "project") else 2
             if (
                 row["status"] == "candidate"
                 and metrics["accepted_verified_runs"] >= 2
-                and metrics["independent_projects"] >= 2
+                and metrics["independent_projects"] >= required_projects
                 and metrics["acceptance_ratio"] >= 0.75
                 and metrics["freshness"] >= 0.5
                 and not metrics["needs_revalidation"]
@@ -112,19 +116,19 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             ):
                 action = "promote-active"
                 proposed_status = "active"
-                reason = "accepted and verified evidence transferred across projects"
+                reason = "accepted and verified evidence supports use within its declared scope"
 
             if (
                 proposed_status == "active"
                 and row["kind"] == "experience"
                 and metrics["accepted_verified_runs"] >= 4
-                and metrics["independent_projects"] >= 3
+                and metrics["independent_projects"] >= (3 if scope in ("stack", "global") else 1)
                 and metrics["acceptance_ratio"] >= 0.80
                 and not metrics["needs_revalidation"]
             ):
                 action = "generalize-pattern"
                 proposed_kind = "pattern"
-                reason = "broad accepted transfer suggests a reusable pattern"
+                reason = "repeated accepted evidence supports a reusable pattern inside the declared scope"
 
             if (
                 row["status"] == "candidate"
@@ -137,39 +141,28 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
                 reason = "single-use stale candidate with no reuse"
 
             needs_revalidation = bool(row["needs_revalidation"]) or days_since(row["last_verified_at"] or row["updated_at"]) > 365
-            skill_eligible = (
-                proposed_status == "active"
-                and proposed_kind in ("experience", "pattern")
-                and bool(row["solution_summary"])
-                and metrics["accepted_verified_runs"] >= 4
-                and metrics["independent_projects"] >= 2
-                and metrics["acceptance_ratio"] >= 0.80
-                and not needs_revalidation
-            )
 
             if args.apply:
                 conn.execute(
                     """
                     UPDATE experiences
-                    SET utility = ?, status = ?, kind = ?, status_reason = ?, updated_at = ?
-                    WHERE id = ?
+                    SET utility=?, status=?, kind=?, status_reason=?, updated_at=?
+                    WHERE id=?
                     """,
                     (
-                        metrics["utility"],
-                        proposed_status,
-                        proposed_kind,
+                        metrics["utility"], proposed_status, proposed_kind,
                         reason if action != "keep" else row["status_reason"],
-                        utc_now() if action != "keep" else row["updated_at"],
-                        row["id"],
+                        utc_now() if action != "keep" else row["updated_at"], row["id"],
                     ),
                 )
             else:
-                conn.execute("UPDATE experiences SET utility = ? WHERE id = ?", (metrics["utility"], row["id"]))
+                conn.execute("UPDATE experiences SET utility=? WHERE id=?", (metrics["utility"], row["id"]))
 
             actions.append(
                 {
                     "id": row["id"],
                     "kind": row["kind"],
+                    "scope": scope,
                     "status": row["status"],
                     "proposed_kind": proposed_kind,
                     "proposed_status": proposed_status,
@@ -177,7 +170,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
                     "reason": reason,
                     "metrics": metrics,
                     "needs_revalidation": needs_revalidation,
-                    "skill_eligible": skill_eligible,
                 }
             )
         conn.commit()
@@ -186,26 +178,25 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         {
             "status": "applied" if args.apply else "preview",
             "count": len(actions),
-            "changes": [item for item in actions if item["action"] != "keep" or item["needs_revalidation"] or item["skill_eligible"]],
-            "note": "Execution success alone cannot promote knowledge. Automatic promotion requires accepted and verified evidence on the same supporting runs.",
+            "changes": [item for item in actions if item["action"] != "keep" or item["needs_revalidation"]],
+            "note": (
+                "Execution success alone cannot promote knowledge. Agent Lore stops at scoped experiences/patterns; "
+                "learned procedures are not materialized into Agent Skills."
+            ),
         }
     )
     return 0
 
 
-def validate_skill_name(name: str) -> str:
-    normalized = normalize(name).replace(" ", "-")
-    if len(normalized) > 64 or not SKILL_NAME_RE.fullmatch(normalized):
-        raise ValueError("skill name must be kebab-case, <=64 chars, with lowercase letters/numbers/hyphens")
-    return normalized
-
-
 def cmd_promote(args: argparse.Namespace) -> int:
+    """Explicitly promote evidence to a pattern/eval; learned Skill output is legacy-only."""
     now = utc_now()
     with connect() as conn:
-        row = conn.execute("SELECT * FROM experiences WHERE id = ?", (args.id,)).fetchone()
+        row = conn.execute("SELECT * FROM experiences WHERE id=?", (args.id,)).fetchone()
         if not row:
             raise ValueError(f"unknown knowledge id: {args.id}")
+        if row["kind"] == "skill":
+            raise ValueError("legacy learned skills are read-only; create a scoped experience/pattern instead")
         metrics = lifecycle_metrics(conn, row)
         if row["needs_revalidation"]:
             raise ValueError("knowledge needs revalidation after negative feedback; do not promote it yet")
@@ -213,21 +204,12 @@ def cmd_promote(args: argparse.Namespace) -> int:
             raise ValueError("promotion requires at least one supporting run that is both accepted and verified")
 
         target_kind = args.kind
-        knowledge_name = row["knowledge_name"]
-        if target_kind == "skill":
-            if not row["solution_summary"]:
-                raise ValueError("skill promotion requires a solution/procedure summary")
-            if not args.name and not knowledge_name:
-                raise ValueError("skill promotion requires --name")
-            knowledge_name = validate_skill_name(args.name or knowledge_name)
-        elif args.name:
-            knowledge_name = normalize(args.name).replace(" ", "-")
-
+        knowledge_name = normalize(args.name).replace(" ", "-") if args.name else row["knowledge_name"]
         conn.execute(
             """
             UPDATE experiences
-            SET kind = ?, status = 'active', knowledge_name = ?, status_reason = ?, updated_at = ?
-            WHERE id = ?
+            SET kind=?, status='active', knowledge_name=?, status_reason=?, updated_at=?
+            WHERE id=?
             """,
             (target_kind, knowledge_name, args.reason or f"explicitly promoted to {target_kind}", now, args.id),
         )
@@ -238,7 +220,7 @@ def cmd_promote(args: argparse.Namespace) -> int:
 
 def cmd_deprecate(args: argparse.Namespace) -> int:
     with connect() as conn:
-        exists = conn.execute("SELECT 1 FROM experiences WHERE id = ?", (args.id,)).fetchone()
+        exists = conn.execute("SELECT 1 FROM experiences WHERE id=?", (args.id,)).fetchone()
         if not exists:
             raise ValueError(f"unknown knowledge id: {args.id}")
         conn.execute(
@@ -252,7 +234,7 @@ def cmd_deprecate(args: argparse.Namespace) -> int:
 
 def cmd_archive(args: argparse.Namespace) -> int:
     with connect() as conn:
-        exists = conn.execute("SELECT 1 FROM experiences WHERE id = ?", (args.id,)).fetchone()
+        exists = conn.execute("SELECT 1 FROM experiences WHERE id=?", (args.id,)).fetchone()
         if not exists:
             raise ValueError(f"unknown knowledge id: {args.id}")
         conn.execute(
@@ -276,6 +258,9 @@ def cmd_knowledge(args: argparse.Namespace) -> int:
     if args.type:
         clauses.append("task_type = ?")
         params.append(args.type)
+    if getattr(args, "scope", None):
+        clauses.append("knowledge_scope = ?")
+        params.append(args.scope)
     with connect() as conn:
         rows = conn.execute(
             f"SELECT * FROM experiences WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT ?",
@@ -288,11 +273,23 @@ def cmd_knowledge(args: argparse.Namespace) -> int:
                 {
                     "id": row["id"],
                     "kind": row["kind"],
+                    "legacy_read_only": row["kind"] == "skill",
                     "name": row["knowledge_name"],
                     "status": row["status"],
+                    "scope": row["knowledge_scope"],
+                    "scope_ref": row["scope_ref"],
+                    "family": row["experience_family"],
                     "task_type": row["task_type"],
                     "task_subtype": row["task_subtype"],
                     "module": row["module"],
+                    "observation": row["observation"] or row["failure_reason"] or row["lesson"],
+                    "invariant": row["invariant"],
+                    "root_cause": row["root_cause"],
+                    "root_cause_status": row["root_cause_status"],
+                    "applies_when": _parse_json_list(row["applies_when"]),
+                    "not_proven": _parse_json_list(row["not_proven"]),
+                    "historical_solution": row["solution_summary"],
+                    "solution_status": row["solution_status"],
                     "lesson": row["lesson"],
                     "lesson_canonical": row["lesson_canonical"],
                     "source_language": row["source_language"],
@@ -307,38 +304,4 @@ def cmd_knowledge(args: argparse.Namespace) -> int:
                 }
             )
     emit({"count": len(items), "knowledge": items})
-    return 0
-
-
-def materialize_skill(row: sqlite3.Row, root: Path, metrics: dict[str, Any]) -> Path:
-    name = validate_skill_name(row["knowledge_name"] or "")
-    target = root / name
-    target.mkdir(parents=True, exist_ok=True)
-    description = row["lesson"].strip().replace("\n", " ")[:900]
-    body = f"""---\nname: {name}\ndescription: {json.dumps(description, ensure_ascii=False)}\n---\n\n# {name}\n\nThis is a locally learned Agent Lore skill. Treat it as advisory engineering evidence, not a project constraint.\n\n## Use when\n\n- Project module learned: {row['module'] or 'unspecified'}\n- Task type: {row['task_type'] or 'unspecified'}\n- Task subtype: {row['task_subtype'] or 'unspecified'}\n- Language: {row['language'] or 'unspecified'}\n- Framework: {row['framework'] or 'unspecified'}\n- Framework version learned: {row['framework_version'] or 'unspecified'}\n\n## Learned lesson\n\n{row['lesson']}\n\n## Procedure / successful approach\n\n{row['solution_summary'] or 'No explicit procedure was recorded.'}\n\n## Known failure mode\n\n{row['failure_reason'] or 'No specific failure mode was recorded.'}\n\n## Evidence metadata\n\n- Agent Lore knowledge id: `{row['id']}`\n- Recorded evidence count: {row['evidence_count']}\n- Accepted runs: {metrics['accepted_runs']}\n- Accepted + verified runs: {metrics['accepted_verified_runs']}\n- Rework runs: {metrics['rework_runs']}\n- Rejected runs: {metrics['rejected_runs']}\n- Accepted projects: {metrics['independent_projects']}\n- Utility: {row['utility']}\n- Last verified: {row['last_verified_at'] or 'unknown'}\n\nBefore applying this skill, compare it against current project constraints, dependency versions, deterministic verification, and recent acceptance feedback.\n"""
-    (target / "SKILL.md").write_text(body, encoding="utf-8")
-    return target / "SKILL.md"
-
-
-def cmd_materialize(args: argparse.Namespace) -> int:
-    p = ensure_dirs()
-    files: list[str] = []
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM experiences WHERE kind='skill' AND status='active' AND knowledge_name IS NOT NULL ORDER BY updated_at DESC"
-        ).fetchall()
-        for row in rows:
-            metrics = lifecycle_metrics(conn, row)
-            if row["needs_revalidation"] or metrics["accepted_verified_runs"] < 1:
-                continue
-            files.append(str(materialize_skill(row, p["skills"], metrics)))
-    emit(
-        {
-            "status": "materialized",
-            "count": len(files),
-            "skills_root": str(p["skills"]),
-            "files": files,
-            "note": "Only active learned skills with accepted+verified evidence and no revalidation flag are materialized.",
-        }
-    )
     return 0
