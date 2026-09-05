@@ -1,22 +1,23 @@
 # Data Model
 
-Agent Lore separates **what happened**, **whether it was verified**, **whether it was accepted**, **what was learned**, **which configuration performed the work**, and **what routing decision was made**.
+Agent Lore separates **execution**, **verification**, **acceptance**, **historical evidence**, **model/harness observations**, and **routing decisions** so none is mistaken for another.
+
+SQLite is the canonical runtime store. Reports/cards are derived views.
 
 ## `runs`
 
 One row per observed execution attempt.
 
-Important fields:
+Important fields include:
 
 ```text
-id
-source_project
-module
+id / created_at
+source_project / module
 task_type / task_subtype / task_summary
-task_summary_canonical / source_language / canonicalizer / canonicalized_at
+task_summary_canonical / source_language / canonicalizer
 task_scope / operation
 task_group_id / parent_run_id / attempt_index
-language / framework / version
+language / framework / framework_version
 agent_role / model / harness
 outcome
 verification / verification_status
@@ -30,41 +31,14 @@ retry_count
 files_touched / lines_changed / modules_touched
 has_db_change / has_api_contract_change / test_count
 run_kind: primary | shadow | challenge
-topology
-agent_count / merge_conflicts
-execution_capture_status / execution_capture_source / execution_capture_notes / execution_captured_at
+topology / agent_count / merge_conflicts
+execution_capture_status / execution_capture_source / execution_capture_notes
 challenge_level / challenge_useful
 route_decision_id
 experience_id
 ```
 
-A run can exist without producing reusable knowledge.
-
-`outcome=success` means the execution attempt completed successfully. It is not equivalent to final acceptance.
-
-`execution_capture_status` is `complete | partial | not-collected`. It describes telemetry coverage, not execution quality. Existing and newly recorded runs default to `not-collected`; the absence of ledger rows must never be interpreted as proof that only one agent ran.
-
-## `run_agents`
-
-Optional after-the-fact observations of the actual host execution tree:
-
-```text
-run_id / agent_id
-parent_agent_id
-display_name
-role / specialization
-model / harness / status
-task_summary
-depth
-started_at / finished_at
-wall_time_ms / compute_time_ms / cost_usd
-metadata_json
-created_at / updated_at
-```
-
-The composite `(run_id, agent_id)` key lets a host incrementally upsert nodes. Only `agent_id` is required by the manifest. Unknown host-specific fields are retained in `metadata_json`, so the schema does not force one provider, role taxonomy, or execution engine.
-
-A `complete` capture requires every referenced parent in the same manifest, replaces earlier partial rows for that run, and stores an exact `runs.agent_count`. A `partial` capture may include an external/unseen parent and is incrementally upserted; its observed row count is not promoted to an exact agent count.
+`outcome=success` means the attempt executed successfully. It does not imply verified, accepted, or safe.
 
 ## Verification and acceptance
 
@@ -80,24 +54,24 @@ Acceptance:
 pending | accepted | rework | rejected | invalidated | not-required
 ```
 
-User-visible/product work should normally remain `pending` until human/reviewer acceptance exists.
+User-visible/product/architecture work may remain acceptance-pending after technical verification.
 
 ## Rework lineage
 
-`task_group_id` identifies one logical task across attempts.
+`task_group_id` groups attempts on one logical task. `parent_run_id` records correction/rework lineage.
 
 ```text
-Task group X
-├─ run A / attempt 1 / rework
-├─ run B / attempt 2 / failed
-└─ run C / attempt 3 / accepted
+Task group
+├─ attempt 1 / rework
+├─ attempt 2 / failed
+└─ attempt 3 / accepted
 ```
 
-`parent_run_id` links a corrected attempt to the prior attempt. This supports first-pass acceptance, rework count, and accumulated work/cost to an accepted result.
+This supports first-pass acceptance and cost/time-to-accepted-result metrics.
 
 ## `run_feedback`
 
-Preserves explicit feedback events:
+Explicit feedback events:
 
 ```text
 id
@@ -109,70 +83,164 @@ source: human | reviewer | auto
 related_run_id
 ```
 
-The current acceptance state also lives on `runs` for efficient querying.
+## `experiences` — scoped Evidence Capsules
 
-## `experiences`
+A reusable historical item is evidence, not an instruction.
 
-A compact reusable claim distilled from runs.
+Legacy/common fields:
 
 ```text
 id
-kind: experience | pattern | skill | eval
+kind: experience | pattern | eval | legacy skill
 status: candidate | active | deprecated | archived
 knowledge_name
 source_project
 module / task_type / task_subtype
-lesson
-task_summary_canonical / lesson_canonical / solution_summary_canonical
-source_language / canonicalizer / canonicalized_at
+language / framework / framework_version
+lesson / canonical representations
 failure_reason
 solution_summary
 confidence / utility
-success_count / failure_count / evidence_count
-reuse_count
+success_count / failure_count / evidence_count / reuse_count
 trust
 last_verified_at
 needs_revalidation
-status_reason
-superseded_by
+status_reason / superseded_by
 ```
 
-`confidence` is a weak metadata signal, not truth probability. `utility` is a lifecycle score, not authority.
+v0.9 Evidence Capsule fields:
 
-Negative acceptance feedback can set `needs_revalidation=1`; such knowledge is down-ranked and cannot be promoted/materialized until revalidated.
+```text
+knowledge_scope: task | module | project | stack | global
+scope_ref
+experience_family
+observation
+invariant
+root_cause
+root_cause_status: unknown | hypothesis | established | disputed
+applies_when: JSON array
+not_proven: JSON array
+solution_status: candidate | preferred | conditional | fallback | superseded | invalid
+summary_version
+```
 
-Original-language text remains authoritative. Canonical text is an optional host-supplied cross-language retrieval representation, not a replacement or a claim that translation is exact.
+### Meaning
 
-## knowledge_revalidations
+- `observation` — what was actually observed.
+- `invariant` — what should remain true independent of a specific implementation.
+- `root_cause` — explanation with explicit epistemic status; do not treat hypotheses as established facts.
+- `applies_when` — signals that make the case relevant.
+- `not_proven` — boundaries preventing over-generalization.
+- `solution_summary` — one historical remedy/variant, not future instruction.
+- `solution_status` — how current evidence regards that variant.
+- `experience_family` — stable problem/failure family that may contain multiple solution variants.
 
-An immutable audit event records completion of an explicit knowledge revalidation:
+`confidence` is metadata, not truth probability. `utility` is lifecycle/retrieval metadata, not authority.
 
-~~~text
+## Knowledge scope
+
+Scope is persisted and used to prevent cross-project leakage:
+
+```text
+task    -> narrow task context inside the source project
+module  -> same project/module
+project -> source project
+stack   -> deliberately transferable language/framework context
+global  -> explicitly generalized evidence
+```
+
+A project-specific convention must not silently become another project's instruction.
+
+## Legacy learned Skills
+
+Pre-v0.9 data may contain:
+
+```text
+kind='skill'
+```
+
+and legacy files under `~/.agent-lore/knowledge/`.
+
+They are preserved for backward compatibility but are read-only legacy state:
+
+- excluded from normal retrieval
+- cannot be newly promoted
+- cannot be newly materialized
+
+The active learning lifecycle now stops at Experience/Pattern/Eval.
+
+## `experience_evidence`
+
+Links historical knowledge to source runs:
+
+```text
+experience_id
+run_id
+relation: supports | contradicts | related
+created_at
+```
+
+Linked run state—outcome, verification, acceptance—remains authoritative over the relation label.
+
+## `knowledge_revalidations`
+
+Immutable explicit revalidation event:
+
+```text
 id
 experience_id
 run_id
 created_at
 reason
 source
-~~~
-
-The referenced run must be linked to the knowledge and must be successful, verified, and accepted. Revalidation clears the hold but does not reactivate deprecated or archived knowledge.
-
-## `experience_evidence`
-
-Links knowledge to actual runs:
-
-```text
-experience_id
-run_id
-relation: supports | contradicts | related
 ```
 
-A supporting relation should require an accepted/verified outcome when the knowledge represents a successful procedure. The lifecycle additionally computes acceptance metrics from linked runs instead of trusting the relation label alone.
+The linked run must be successful, verified, and accepted. Revalidation clears a hold but does not reactivate deprecated/archived evidence or rewrite old interpretation text.
+
+## `knowledge_usage`
+
+Audits whether retrieved evidence was actually used:
+
+```text
+id
+experience_id
+run_id
+created_at
+decision: applied | ignored
+reason
+source
+```
+
+Retrieval alone does not count as reuse. `ignored` is neutral.
+
+## `run_agents`
+
+Optional after-the-fact execution-tree observations:
+
+```text
+run_id / agent_id
+parent_agent_id
+display_name
+role / specialization
+model / harness / status
+task_summary
+depth
+started_at / finished_at
+wall_time_ms / compute_time_ms / cost_usd
+metadata_json
+```
+
+`execution_capture_status` on the run is:
+
+```text
+complete | partial | not-collected
+```
+
+Missing rows are not evidence of single-agent execution.
 
 ## `agent_configs`
 
-Configurations the Phase 4 router may choose:
+Available executor configurations:
 
 ```text
 name
@@ -188,117 +256,107 @@ priority
 notes
 ```
 
-`quality_tier` and `cost_tier` are cold-start priors only. They are not benchmark facts.
+`quality_tier` / `cost_tier` are cold-start priors, not universal benchmark facts.
+
+A new model normally adds/configures an executor rather than changing Agent Lore architecture.
 
 ## `routing_decisions`
 
-One row per integrated recommendation. It captures project/module/task context, risk/complexity/dependencies, recommended topology/configuration, challenge policy, confidence, and the final linked outcome run.
+One row per recommendation, including task context and bounded execution guidance.
 
-Version 0.8 additionally persists:
+Fields include:
 
-~~~text
-task_summary_canonical / source_language
-task_shape_json / evidence_plan_json
+```text
+project/module/task/subtype
+model/harness/config recommendation
+legacy topology
+TaskShape JSON
+EvidencePlan JSON
 coordination / schedule / delegation_depth
 verification_tier / security_depth
-~~~
+memory_mode (schema slot for route/memory calibration)
+challenge recommendation
+confidence/reasons
+outcome_run_id
+```
 
-The legacy topology field remains for compatibility. Coordination, schedule, and depth are the richer execution model.
+TaskShape is host/current-model supplied when available; Agent Lore validates structural constraints rather than claiming it derived repository truth itself.
 
 ## Task-conditioned performance
 
 Do not store one global model ranking.
 
-Evaluate:
+Evaluate contextual combinations such as:
 
 ```text
-project
-× module
-× task type/subtype
-× language/framework
-× agent role
+project/module/task/stack
 × model
 × harness
+× role
+× topology
 → execution success
-→ verification pass
+→ verification
 → acceptance / first-pass acceptance / rework
 → quality / cost / timing / retries
 ```
 
-This prevents a fast model on easy tasks from being incorrectly treated as globally faster or better.
+Memory-on/off evaluation should also be matched by task/model/harness where possible before concluding historical memory is helpful.
 
 ## Timing semantics
 
-Keep multiple timing views when possible:
+Keep distinct timing views:
 
 ```text
-latency_ms              model/inference latency
-wall_time_ms             user-visible attempt duration
-compute_time_ms          accumulated model/agent compute
-verification_time_ms     tests/checks
-review_time_ms           review/acceptance work
-coordination_time_ms     multi-agent orchestration overhead
+latency_ms              inference latency
+wall_time_ms            user-visible attempt duration
+compute_time_ms         accumulated agent/model compute
+verification_time_ms    checks/tests
+review_time_ms          review/acceptance work
+coordination_time_ms    orchestration overhead
 ```
 
-For multi-agent systems, wall time can decrease while total compute/cost increases. Report both instead of collapsing them into one latency number.
+Parallelism may reduce wall time while increasing total compute/cost.
 
-## Topology outcomes
+## Reports and derived summaries
 
-Topology learning may use:
-
-```text
-topology
-agent_count
-merge_conflicts
-execution success
-acceptance
-quality
-wall time
-cost
-retries
-```
-
-This lets the router learn that one task distribution benefits from flat parallelism while another is harmed by coordination overhead.
-
-## Learned skill files
-
-An active item explicitly promoted to `kind=skill` can be materialized to:
-
-```text
-~/.agent-lore/knowledge/skills/<skill-name>/SKILL.md
-```
-
-Materialization requires accepted evidence and no `needs_revalidation` flag. The SQLite row remains the evidence/provenance source.
-
-## Reports
-
-Human-readable generated reports live under:
+Generated reports live under lazy-created:
 
 ```text
 ~/.agent-lore/reports/
 ```
 
-`latest.md` and `latest.html` are derived output and can be regenerated from the SQLite source of truth. Reports default to bounded rolling detail while retaining all-history aggregates; `report --full` is the explicit full-history export. Static HTML loads no remote assets and starts no server.
+Reports are derived from SQLite and can be regenerated. They are not canonical memory.
 
-Reports distinguish:
+Likewise, compact memory cards/canonical translations are derived representations. Avoid summary-of-summary chains that discard original structured evidence.
+
+## Runtime filesystem
+
+Fresh v0.9 runtime:
 
 ```text
--         host supplied no measurement
-Pending   acceptance has not been decided
-N/A       metric does not apply
+~/.agent-lore/
+└─ agent-lore.db
 ```
 
-Reports default to English. The dash is reserved for genuinely uncollected values; it must not replace `Pending` or `N/A`, and missing measurements must not be fabricated as zero. Stored source text remains in its original language.
+Lazy directories:
+
+```text
+reports/
+exports/
+archive/
+```
+
+Legacy `knowledge/` may exist after upgrade/import and remains portable. `traces/` and `knowledge/skills/` are no longer pre-created.
 
 ## Privacy boundary
 
-Do not store by default:
+Do not persist by default:
 
-- source repositories
-- full transcripts
-- credentials/secrets
-- `.env` values
+- credentials/secrets/tokens/private keys/`.env` values
 - personal/private user data
 - hidden chain-of-thought
+- full source repositories or transcripts merely because available
+- project wiki/current-state snapshots
+- untrusted external/repository text as global truth
 
-The system should learn primarily from outcomes, concise lessons, acceptance feedback, and structured metadata.
+Store concise structured evidence, provenance, acceptance/rework, scope, verified observations/invariants, model/harness telemetry, and non-sensitive metadata.
