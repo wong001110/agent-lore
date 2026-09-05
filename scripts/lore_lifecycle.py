@@ -4,6 +4,16 @@ from lore_common import *  # noqa: F401,F403
 from lore_memory import *  # noqa: F401,F403
 
 
+def _json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
 def accepted_evidence_metrics(conn: sqlite3.Connection, experience_id: str) -> dict[str, Any]:
     row = conn.execute(
         """
@@ -101,8 +111,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             proposed_kind = row["kind"]
             proposed_status = row["status"]
 
-            # Project/module evidence may become active locally without proving
-            # cross-project transfer. Broader scopes require broader evidence.
             scope = row["knowledge_scope"] or "project"
             required_projects = 1 if scope in ("task", "module", "project") else 2
             if (
@@ -189,7 +197,6 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
 
 def cmd_promote(args: argparse.Namespace) -> int:
-    """Explicitly promote evidence to a pattern/eval; learned Skill output is legacy-only."""
     now = utc_now()
     with connect() as conn:
         row = conn.execute("SELECT * FROM experiences WHERE id=?", (args.id,)).fetchone()
@@ -286,8 +293,8 @@ def cmd_knowledge(args: argparse.Namespace) -> int:
                     "invariant": row["invariant"],
                     "root_cause": row["root_cause"],
                     "root_cause_status": row["root_cause_status"],
-                    "applies_when": _parse_json_list(row["applies_when"]),
-                    "not_proven": _parse_json_list(row["not_proven"]),
+                    "applies_when": _json_list(row["applies_when"]),
+                    "not_proven": _json_list(row["not_proven"]),
                     "historical_solution": row["solution_summary"],
                     "solution_status": row["solution_status"],
                     "lesson": row["lesson"],
