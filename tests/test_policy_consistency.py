@@ -36,11 +36,13 @@ class PolicyConsistencyTest(unittest.TestCase):
         memory = (ROOT / "references" / "MEMORY.md").read_text(encoding="utf-8")
         lifecycle = (ROOT / "references" / "LIFECYCLE.md").read_text(encoding="utf-8")
         self.assertIn("Memory should be queryable, not preloaded", memory)
-        self.assertIn("off | guardrail | rescue | proactive", memory)
-        self.assertIn("blind-plan then historical reveal", memory.lower())
+        for mode in ("off", "guardrail", "rescue", "proactive"):
+            self.assertIn(mode, memory)
+        self.assertIn("Blind-plan then historical reveal", memory)
         self.assertIn("stops creating/materializing learned Agent Skills", memory)
         self.assertIn("Learned Skills are legacy read-only", lifecycle)
-        self.assertIn("task\nmodule\nproject\nstack\nglobal", lifecycle)
+        for scope in ("task", "module", "project", "stack", "global"):
+            self.assertIn(scope, lifecycle)
 
     def test_adaptive_execution_remains_reasoning_aid_not_recipe(self) -> None:
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -82,7 +84,8 @@ class PolicyConsistencyTest(unittest.TestCase):
         self.assertIn("Project state belongs to the project", skill)
         self.assertIn("Semantic interface, not directory convention", context)
         self.assertIn("Zero-config discovery", context)
-        self.assertIn("does not require every repository", context.lower().replace("does **not** require", "does not require"))
+        self.assertIn("must not impose a repository layout", context)
+        self.assertIn("optional `.agent-lore.json`", context)
         self.assertIn("Full-repository review remains exceptional", context)
         self.assertIn("Project state is separate", lifecycle)
 
