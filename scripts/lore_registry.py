@@ -101,6 +101,10 @@ def cmd_policy_set(args: argparse.Namespace) -> int:
         updates["policy.min_model_confidence"] = str(args.min_model_confidence)
     if args.active_memory_limit is not None:
         updates["policy.active_memory_limit"] = str(args.active_memory_limit)
+    if getattr(args, "memory_mode", None) is not None:
+        updates["policy.memory_mode"] = args.memory_mode
+    if getattr(args, "memory_token_budget", None) is not None:
+        updates["policy.memory_token_budget"] = str(args.memory_token_budget)
     with connect() as conn:
         for key, value in updates.items():
             set_meta(conn, key, value)
